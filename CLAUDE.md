@@ -1,0 +1,32 @@
+# Retake Planner, Claude Code rules
+
+A product of ANDERSONLOGIC ai (Jeff Anderson). Strategy and decisions live in the private
+AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository holds the code only.
+
+## Rules that must not be broken
+
+- **This repository is public and GitHub Pages serves every file.** Never commit a question map
+  (it is an answer key) or a Canvas export (it names students). `test/no-maps.test.js` fails on
+  either. Tests and the demo use invented questions and invented students only.
+- **The page reaches nothing.** Its Content-Security-Policy allows only its own scripts, styles,
+  fonts and images. No fetch, no analytics, no third-party font or script, no `localStorage` for
+  student data. The browser test proves the policy blocks a fetch.
+- **No inline `style=""` in generated markup**: the policy refuses it. Set sizes through
+  `element.style`.
+- **Escape every string that came from a file** before it reaches the page.
+- **Canvas's score wins** over the key. A blank counts as missed; an unseen question does not count.
+- **Projector safe** hides names and every question, answer and rationale.
+- It reads results and never feeds a grade.
+- Writing: no em dashes or en dashes in running prose.
+
+## Brand
+
+ANDERSONLOGIC ai: the logo files in `assets/images/brand/andersonlogic/` are cut from the original
+in AndersonLogic-OS `02_BRAND/Logos/` (white and gold artwork, dark grounds only). Palette and type
+are the brand's interim set (tokens at the top of `retake-planner.css`). In text the name is
+`ANDERSON<i>LOGIC</i> ai`.
+
+## Tests
+
+`npm test` (offline) and `npm run test:browser` (needs `npm i --no-save playwright-core`). Any check
+used as evidence must be shown capable of failing; each test carries negative controls.

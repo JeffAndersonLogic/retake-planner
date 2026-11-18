@@ -1,0 +1,7 @@
+node_modules/
+# Real Canvas exports and question maps carry student names or answer keys.
+# They are never committed here: this repository is public.
+*.csv
+*.xlsx
+*Retake-Map*.json
+*-Map.json
