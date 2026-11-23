@@ -1,8 +1,8 @@
 # Retake Planner
 
-**By ANDERSON*LOGIC* ai.** See which learning targets each student missed on a test, so a
-retake or test correction can ask **new** questions on those targets instead of the ones the
-student has already seen.
+**By ANDERSON*LOGIC* ai.** Drop in a multiple-choice test's results and see, right or wrong,
+what every student missed: a heat map, a class report by topic, and a ready prompt for each
+student's open-ended retake questions or test corrections.
 
 It reads results. It does not grade. Canvas holds every grade.
 
@@ -12,21 +12,45 @@ It reads results. It does not grade. Canvas holds every grade.
 
 1. In Canvas, open the quiz (New Quizzes), choose **Reports**, then **Student Analysis**,
    generate it and choose **Export CSV**.
-2. Open the Retake Planner and drop in that file plus the test's **question map**, in
-   either order.
-3. Read the plan four ways:
-   - **By learning target:** how the class did on each target and who needs new questions on it.
-     Write retake questions for the targets at the top first.
-   - **By student:** each student's score, missed targets, and the wrong answer they chose.
+2. Open the Retake Planner and drop in that file. Add the test's **question map** too if you
+   have one (see below); it is optional.
+3. Read the results six ways:
+   - **Heat map:** one row per student, one square per question, green for right and red for
+     wrong (a blank counts as wrong). Columns are grouped by topic, and the bottom row is the
+     class's percent right on each question.
+   - **Class report:** each topic's percent correct, most missed first, with the learning
+     targets inside it and who needs a retake on it. Print it or download it as a CSV.
+   - **By student:** each student's score, what they missed, and the wrong answer they chose.
    - **By question:** percent correct and the most-chosen wrong answer, which usually names
      the misunderstanding to reteach.
-   - **Same retake:** students who missed exactly the same targets.
-4. **Copy the retake plan** or **Download** it as a CSV.
+   - **Retake questions:** a prompt per student (or one for the whole class) to paste into the
+     AI your school allows. Choose **New retake questions** and how many per student, or
+     **Test corrections**. The AI writes open-ended questions on what each student missed;
+     read and edit them before a student sees them.
+   - **Same retake:** students who missed exactly the same topics.
+4. **Group by** topic (the default), learning target, or question.
 
-**Projector safe** replaces names with numbers and hides every question and answer, so a
-projected screen gives nothing away before a retake.
+**Projector safe** replaces names with numbers and hides every question, answer and prompt, so
+a projected screen gives nothing away before a retake.
 
 Try it first with **Try it with invented students**: every name and question in the demo is made up.
+
+### With only the Canvas file
+
+Canvas's Student Analysis file has each question's wording, the answer each student chose and
+the points they earned, but **not** the question's topic or learning target. So with the Canvas
+file alone, the planner shows right and wrong (from Canvas's own points) question by question,
+and the retake prompts still carry each missed question and the answer chosen. The question map
+adds topics, learning targets, the correct answer for questions nobody got right, and the
+reason each wrong answer is wrong.
+
+### The retake prompts and privacy
+
+The page never contacts an AI. It writes text; the teacher copies it into their own AI. A prompt
+never carries a student's name or id: students are numbered ("Student 3"), and the same number
+is used on every view, so the teacher can match the AI's answer back to the student. A prompt
+does carry the missed questions, the answer chosen and the correct answer, because that is what
+lets the AI ask about the same idea without repeating the question.
 
 ## Privacy
 
@@ -47,17 +71,19 @@ colleagues who give the same test. It is a JSON file in the format `retake-plann
   "format": "retake-planner-map/1",
   "title": "Unit 3 Quiz",
   "version": "3.1",
+  "topics": { "3.1": "Empires Expand" },
   "targets": { "3.1 LT1": "I can explain how gunpowder technology ..." },
   "questions": [
-    { "n": 1, "lt": "3.1 LT1", "stem": "The source best illustrates ...",
+    { "n": 1, "topic": "3.1", "lt": "3.1 LT1", "stem": "The source best illustrates ...",
       "options": ["First choice", "Second choice", "Third choice", "Fourth choice"],
       "answer": 1, "points": 2, "rationale": "Why the wrong answers are wrong." }
   ]
 }
 ```
 
-`answer` is the index of the correct choice (0 is the first) or its letter. `targets` can use
-any labels: a learning target, a state standard, a CED topic. The best moment to make a map is
+`answer` is the index of the correct choice (0 is the first) or its letter. `topic` and the
+`topics` names are optional; without them the planner groups by learning target. `targets` can
+use any labels: a learning target, a state standard, a CED topic. The best moment to make a map is
 when the test is written: whoever writes the questions (a teacher, or an AI writing them from
 the course's standards) tags each one with its target and saves the map beside the test.
 
@@ -68,14 +94,16 @@ lists any it could not place.
 
 ## What it handles, and what it does not yet
 
-- Canvas **New Quizzes** Student Analysis exports, in either layout (one row per student, or one
-  row per answer). Canvas does not publish that file's exact columns; if a real export reports
-  fewer matched questions than the map holds, keep its header row (no student rows) and the
-  reader can be adjusted to it.
-- **Single-answer multiple choice.** Essay, multiple-answer, matching and numeric questions are
-  skipped.
+- Canvas **New Quizzes** Student Analysis exports. Three shapes are read: the one seen on a real
+  export on 2026-11-23 (five columns per question: Status, ItemID, ItemType, the question's
+  wording holding the student's answer, and EarnedPoints), one row per student with a score
+  column after each question, and one row per answer. When the file has no name column, students
+  are shown by their row in the file.
+- **Single-answer multiple choice.** Questions with no points in the file are left out.
 - When Canvas and the key disagree (a regraded question), Canvas's score wins and the count is
   shown. A blank answer counts as missed; a question a student never saw is left out.
+- Not yet: Google Forms and Classroom, Schoology, or a plain spreadsheet. Canvas comes first
+  (Jeff, 2026-11-21).
 
 ## Development
 

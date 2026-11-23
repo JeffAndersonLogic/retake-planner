@@ -15,8 +15,11 @@ AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository hold
   `element.style`.
 - **Escape every string that came from a file** before it reaches the page.
 - **Canvas's score wins** over the key. A blank counts as missed; an unseen question does not count.
-- **Projector safe** hides names and every question, answer and rationale.
+- **Projector safe** hides names and every question, answer, rationale and prompt.
 - It reads results and never feeds a grade.
+- **A retake prompt never carries a student's name or id**, only "Student N". The page writes the
+  prompt; the teacher pastes it into their own AI. The page never contacts an AI.
+- **Projector safe also hides the retake prompts**: they hold the test's questions and answers.
 - Writing: no em dashes or en dashes in running prose.
 
 ## Brand

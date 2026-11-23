@@ -31,6 +31,7 @@
  *    "behistorical-retake-map/1" is still read), JSON:
  *
  *      { format, title, version, subtitle,
+ *        topics:    { "3.1": "Empires Expand", ... }          (optional)
  *        targets:   { "3.1 LT1": "I can explain ...", ... },
  *        questions: [ { n, topic, lt, kc, skill, reasoning, source, stem,
  *                       options: [text, ...], answer: index (or "B"), points,
@@ -44,9 +45,16 @@
  *   parseMap(text)                       -> { map, problems, warnings }
  *   readExport(text)                     -> { layout, students, items, notes }
  *   match(map, exp)                      -> { pairs, unmatchedItems, unmatchedQuestions }
- *   analyze(map, exp, matched, options)  -> { students, targets, questions, notes, ... }
+ *   mapFromExport(exp, title)            -> { map, matched } from Canvas's own points, no map file
+ *   analyze(map, exp, matched, options)  -> { students, targets, questions, columns, by, notes, ... }
+ *                                           options: rule 'any'|'most', section, by 'topic'|'lt'|'question'
  *   planText(analysis, options)          -> plain text, one block per student
- *   planCsv(analysis, options)           -> CSV, one row per student per target */
+ *   planCsv(analysis, options)           -> CSV, one row per student per topic or target
+ *   reportRows(analysis)                 -> topics (or targets, or questions), most missed first
+ *   reportCsv(analysis, options)         -> the class report as CSV
+ *   retakePrompt(analysis, student, o)   -> a prompt for the teacher's own AI, no name in it
+ *   classPrompt(analysis, o)             -> one prompt for every student who missed something
+ *                                           o: style 'retake'|'corrections', count 1 to 10 */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -54,7 +62,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.0.0';
+  const VERSION = 'retake-planner/1.1.0';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -170,7 +178,9 @@
     return {
       map: {
         format: data.format, title: String(data.title || 'Untitled assessment'), version: String(data.version || ''),
-        subtitle: String(data.subtitle || ''), targets, questions, _owners: owners
+        subtitle: String(data.subtitle || ''), targets, questions, _owners: owners,
+        // Optional topic names, { "3.1": "Empires Expand" }, shown beside a topic's number.
+        topics: data.topics && typeof data.topics === 'object' ? data.topics : {}
       },
       problems, warnings
     };
@@ -189,8 +199,17 @@
     meta: ['section id', 'section sis id', 'submitted', 'submitted at', 'submission date', 'n correct', 'n incorrect', 'score',
       'total score', 'attempt score', 'final score', 'quiz score', 'points', 'total points', 'kept score', 'percentage', 'percent',
       'time', 'time spent', 'duration', 'started', 'started at', 'finished', 'finished at', 'email', 'course', 'course id',
-      'quiz id', 'quiz title', 'assignment id', 'user', 'graded', 'graded at']
+      'quiz id', 'quiz title', 'assignment id', 'user', 'graded', 'graded at',
+      // The summary at the end of a New Quizzes Student Analysis row (seen 2026-11-23).
+      'numberofcorrect', 'numberofincorrect', 'noresponse', 'pointspossible', 'overallscore',
+      'number of correct', 'number of incorrect', 'no response', 'overall score']
   };
+  // New Quizzes Student Analysis, as exported on 2026-11-23: every question is five
+  // columns, "Status, ItemID, ItemType, <the question's wording>, EarnedPoints", and the
+  // wording column holds the answer the student chose. The three before the wording
+  // belong to the question after them; EarnedPoints belongs to the one before it.
+  const BLOCK_BEFORE = { status: 'status', itemid: 'itemId', 'item id': 'itemId', itemtype: 'type', 'item type': 'type' };
+  const BLOCK_AFTER = ['earnedpoints', 'earned points'];
   // Long layout: one row per student per question.
   const LONG = {
     item: ['item id', 'question id', 'item', 'question', 'item name', 'question name', 'item title', 'question title', 'title',
@@ -223,7 +242,7 @@
     const s = norm(v);
     if (!s) return '';
     if (s === 'not attempted' || s === 'not supported' || s === 'n a' || s === 'na') return 'absent';
-    if (s === 'no answer' || s === 'unanswered' || s === 'blank') return 'blank';
+    if (s === 'no answer' || s === 'unanswered' || s === 'blank' || s === 'no response' || s === 'not answered' || s === 'skipped') return 'blank';
     if (s === 'not graded' || s === 'needs grading' || s === 'pending') return 'ungraded';
     return 'graded';
   }
@@ -240,16 +259,24 @@
     };
     const respCol = findCol(heads, LONG.response);
     const itemCol = findCol(heads, LONG.item);
-    const isLong = respCol >= 0 && itemCol >= 0 && itemCol !== respCol;
+    const isBlock = heads.some(h => BLOCK_AFTER.includes(h));
+    const isLong = !isBlock && respCol >= 0 && itemCol >= 0 && itemCol !== respCol;
+    // A Student Analysis file can arrive with no name column (a teacher removed it, or
+    // a school's export leaves it out). Only that recognised shape is read without
+    // one, and its students are numbered by their row in the file; any other file
+    // with no student column is not guessed at.
+    const unnamed = col.name < 0 && col.id < 0 && col.sis < 0;
+    if (unnamed && !isBlock) {
+      return { layout: 'unknown', students: [], items: [], notes: ['No student column was found. The first row should name a column "name", "student name" or "id".'] };
+    }
+    if (unnamed) notes.push('The file has no student name column, so each student is shown by their row in the file (Row 2 is the first student under the header).');
+    const rowOf = new Map(rows.map((r, i) => [r, i + 1]));
     const studentKeyOf = r => {
       const id = col.id >= 0 ? String(r[col.id] || '').trim() : '';
       const sis = col.sis >= 0 ? String(r[col.sis] || '').trim() : '';
       const name = col.name >= 0 ? String(r[col.name] || '').trim() : '';
-      return id || sis || name;
+      return id || sis || name || (unnamed ? 'Row ' + rowOf.get(r) : '');
     };
-    if (col.name < 0 && col.id < 0 && col.sis < 0) {
-      return { layout: 'unknown', students: [], items: [], notes: ['No student column was found. The first row should name a column "name", "student name" or "id".'] };
-    }
 
     const students = new Map();
     const touch = r => {
@@ -258,7 +285,7 @@
       if (!students.has(key)) {
         students.set(key, {
           key,
-          name: col.name >= 0 ? plain(r[col.name]) : '',
+          name: col.name >= 0 ? plain(r[col.name]) : (unnamed ? key : ''),
           id: col.id >= 0 ? String(r[col.id] || '').trim() : '',
           section: col.section >= 0 ? plain(r[col.section]) : ''
         });
@@ -306,7 +333,9 @@
         };
       });
       if (multi) notes.push('Some students have more than one attempt; the latest attempt is used.');
-      return { layout: 'long', students: [...students.values()], items: [...items.values()], notes };
+      const longItems = [...items.values()];
+      fillPossible(longItems);
+      return { layout: 'long', shape: 'rows', students: [...students.values()], items: longItems, notes };
     }
 
     // Wide: one row per student, questions across the columns.
@@ -314,7 +343,21 @@
     heads.forEach((h, i) => { if (ROLE.meta.includes(h)) known.add(i); });
     const groups = new Map();
     let lastGroup = null;
-    heads.forEach((h, i) => {
+    if (isBlock) {
+      // Keyed by column, not wording: two questions may be worded the same.
+      let pending = {};
+      heads.forEach((h, i) => {
+        if (known.has(i) || h === '') return;
+        if (BLOCK_AFTER.includes(h)) { if (lastGroup && lastGroup.score < 0) lastGroup.score = i; return; }
+        if (BLOCK_BEFORE[h]) { pending[BLOCK_BEFORE[h]] = i; return; }
+        const g = { key: 'column ' + (i + 1), label: plain(header[i]), response: i, score: -1, possible: -1,
+          status: pending.status != null ? pending.status : -1, type: pending.type != null ? pending.type : -1, first: i };
+        groups.set(g.key, g);
+        pending = {};
+        lastGroup = g;
+      });
+    }
+    if (!isBlock) heads.forEach((h, i) => {
       if (known.has(i)) { lastGroup = null; return; }
       const raw = header[i];
       // A bare number header ("2.0") is the score column for the question before it,
@@ -363,11 +406,28 @@
           possible: c.possible >= 0 ? num(r[c.possible]) : (c.score >= 0 && num(header[c.score]) != null ? num(header[c.score]) : null),
           status: c.status >= 0 ? statusOf(r[c.status]) : ''
         };
+        if (c.type >= 0 && !it.type) it.type = plain(r[c.type]);
       });
     });
     items.forEach(it => { delete it._cols; });
+    fillPossible(items);
     if (multi) notes.push(multi + ' student(s) appear on more than one row; the latest attempt is used.');
-    return { layout: 'wide', students: [...students.values()], items, notes };
+    return { layout: 'wide', shape: isBlock ? 'student-analysis' : 'columns', students: [...students.values()], items, notes };
+  }
+
+  // When a file gives the points a student earned but not the points a question was
+  // worth, the most anyone earned on it stands in: on a one-answer multiple-choice
+  // question that is full marks, unless nobody got it right, when every score is 0
+  // and every answer is wrong either way.
+  function fillPossible(items) {
+    items.forEach(it => {
+      const rs = Object.values(it.responses);
+      if (rs.some(r => r.possible != null)) return;
+      const scores = rs.map(r => r.score).filter(s => s != null);
+      if (!scores.length) return;
+      const most = Math.max.apply(null, scores);
+      if (most > 0) rs.forEach(r => { r.possible = most; });
+    });
   }
 
   /* ── matching Canvas's questions to the map ───────────────────────────── */
@@ -427,6 +487,41 @@
     return { pairs, unmatchedItems, unmatchedQuestions };
   }
 
+  /* ── no question map: Canvas's own scores ─────────────────────────────── */
+
+  // A teacher with only the Canvas file still gets right and wrong for every student
+  // on every question, because Canvas scored them. Each question is its own group,
+  // its "choices" are the answers students gave, and its correct answer is the one a
+  // student earned full marks with (unknown when nobody did). Topics and learning
+  // targets need a map, since the Canvas file does not carry them (seen 2026-11-23).
+  function mapFromExport(exp, title) {
+    const questions = [];
+    const pairs = [];
+    exp.items.forEach((it, i) => {
+      const rs = Object.values(it.responses);
+      if (!rs.some(r => r.score != null)) return;
+      const n = i + 1;
+      const options = [];
+      rs.forEach(r => { if (r.response && !options.some(o => norm(o) === norm(r.response))) options.push(r.response); });
+      const full = rs.find(r => r.response && r.score != null && r.score > 0 && (r.possible == null || r.score >= r.possible - 1e-9));
+      const worth = rs.map(r => r.possible).find(p => p != null && p > 0);
+      const q = {
+        n, topic: '', lt: 'Q' + n, kc: '', skill: '', reasoning: '', source: '', stem: it.label, options,
+        answer: full ? options.findIndex(o => norm(o) === norm(full.response)) : -1, points: worth || 1, rationale: '',
+        _opts: options.map(norm), _stem: norm(it.label)
+      };
+      questions.push(q);
+      pairs.push({ item: it, q, how: 'scored by Canvas', partial: false });
+    });
+    if (!questions.length) {
+      return { map: null, matched: null, problem: 'The Canvas file has no points for its questions, so right and wrong cannot be told apart without a question map.' };
+    }
+    return {
+      map: { format: MAP_FORMAT, title: title || 'This test', version: '', subtitle: '', targets: {}, questions, keyless: true, _owners: new Map() },
+      matched: { pairs, unmatchedItems: [], unmatchedQuestions: [] }
+    };
+  }
+
   /* ── the analysis ─────────────────────────────────────────────────────── */
 
   function judge(pair, r) {
@@ -442,8 +537,8 @@
     if (r.score != null) {
       const possible = r.possible != null && r.possible > 0 ? r.possible : null;
       right = possible != null ? r.score >= possible - 1e-9 : r.score > 0;
-      if (choice >= 0 && right !== keyRight) disagree = true;
-    } else if (choice < 0) {
+      if (choice >= 0 && q.answer >= 0 && right !== keyRight) disagree = true;
+    } else if (choice < 0 || q.answer < 0) {
       return { status: 'unknown', response: r.response, choice };
     }
     if (!r.response && !right) return { status: 'blank', response: '', choice: -1, disagree };
@@ -452,16 +547,37 @@
 
   // options.rule: 'any' (a target needs a retake if any of its questions was missed,
   // the default) or 'most' (only if more than half were missed).
+  // options.by: what a "target" is in every count and view. 'topic' (the default,
+  // Jeff 2026-11-23) when the map gives topics, else the learning target; 'lt' for the
+  // learning target; 'question' for each question on its own. With no map, every
+  // question is its own group, because the Canvas file names no topic.
+  const BY_LABEL = { topic: 'Topic', lt: 'Learning target', question: 'Question' };
+  function groupingOf(map, want) {
+    if (map.keyless) return 'question';
+    const hasTopic = map.questions.some(q => q.topic);
+    if (want === 'question') return 'question';
+    if (want === 'lt') return 'lt';
+    return hasTopic ? 'topic' : 'lt';
+  }
+  function groupKey(by, q) { return by === 'topic' ? (q.topic || q.lt) : (by === 'question' ? 'Q' + q.n : q.lt); }
+  function groupWords(by, map, key, q) {
+    if (by === 'topic') return (map.topics && map.topics[key]) || '';
+    if (by === 'question') return q ? plain(q.stem) : '';
+    return map.targets[key] || '';
+  }
+
   function analyze(map, exp, matched, options) {
     const rule = options && options.rule === 'most' ? 'most' : 'any';
     const section = options && options.section ? options.section : '';
+    const by = groupingOf(map, options && options.by);
+    const gk = q => groupKey(by, q);
     const notes = [];
     let disagreements = 0;
     let unknown = 0;
     const roster = exp.students.filter(s => !section || s.section === section);
     const pairs = matched.pairs;
     const ltOrder = [];
-    map.questions.forEach(q => { if (!ltOrder.includes(q.lt)) ltOrder.push(q.lt); });
+    map.questions.forEach(q => { if (!ltOrder.includes(gk(q))) ltOrder.push(gk(q)); });
     // "3.1 LT2" before "3.1 LT10" before "3.2 LT1": course order, not quiz order.
     ltOrder.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 
@@ -477,8 +593,9 @@
       const possible = counted.reduce((t, r) => t + r.q.points, 0);
       const byLt = new Map();
       counted.forEach(r => {
-        if (!byLt.has(r.q.lt)) byLt.set(r.q.lt, { lt: r.q.lt, of: 0, missed: 0, questions: [] });
-        const e = byLt.get(r.q.lt);
+        const g = gk(r.q);
+        if (!byLt.has(g)) byLt.set(g, { lt: g, of: 0, missed: 0, questions: [] });
+        const e = byLt.get(g);
         e.of += 1;
         if (r.status !== 'correct') { e.missed += 1; e.questions.push(r.q.n); }
       });
@@ -503,12 +620,15 @@
     });
 
     const targets = ltOrder.map(lt => {
-      const qs = questions.filter(x => x.q.lt === lt);
+      const qs = questions.filter(x => gk(x.q) === lt);
       const answered = qs.reduce((t, x) => t + x.answered, 0);
       const correct = qs.reduce((t, x) => t + x.correct, 0);
       const need = took.filter(s => s.targetsMissed.some(e => e.lt === lt));
-      return { lt, text: map.targets[lt] || '', questions: qs.map(x => x.q.n), pct: answered ? correct / answered : null,
-        need: need.map(s => s.key), needCount: need.length };
+      // The learning targets inside a topic, so a topic's card can say what it asks.
+      const lts = [...new Set(qs.map(x => x.q.lt))].filter(x => by === 'topic' && map.targets[x]);
+      return { lt, text: groupWords(by, map, lt, qs[0] && qs[0].q), questions: qs.map(x => x.q.n), pct: answered ? correct / answered : null,
+        need: need.map(s => s.key), needCount: need.length, answered, correct, missed: answered - correct,
+        within: lts.map(x => ({ lt: x, text: map.targets[x] })) };
     });
 
     // Students who need exactly the same targets can take the same retake.
@@ -526,7 +646,12 @@
     if (absent) notes.push(absent + ' student(s) have no answers to any matched question and are left out.');
 
     return {
-      version: VERSION, rule, section, title: map.title, students, took: took.length, questions, targets, groups, notes,
+      version: VERSION, rule, section, title: map.title, by, byLabel: BY_LABEL[by], keyless: !!map.keyless,
+      // The heat map's columns: every question, grouped under its topic or target in
+      // course order, each an index into students[].results and questions.
+      columns: ltOrder.map(g => ({ key: g,
+        cols: pairs.map((p, i) => i).filter(i => gk(pairs[i].q) === g) })).filter(c => c.cols.length),
+      students, took: took.length, questions, targets, groups, notes,
       possible: pairs.reduce((t, p) => t + p.q.points, 0)
     };
   }
@@ -543,7 +668,8 @@
       if (!s.targetsMissed.length) lines.push('  Nothing to retake.');
       s.targetsMissed.forEach(e => {
         const t = a.targets.find(x => x.lt === e.lt);
-        lines.push('  ' + e.lt + ' (missed ' + e.missed + ' of ' + e.of + '; question' + (e.questions.length > 1 ? 's ' : ' ') + e.questions.join(', ') + ')' + (t && t.text ? ': ' + t.text : ''));
+        const words = t && t.text && !(anon && a.by === 'question') ? ': ' + t.text : '';
+        lines.push('  ' + (a.by === 'topic' ? 'Topic ' : '') + e.lt + ' (missed ' + e.missed + ' of ' + e.of + '; question' + (e.questions.length > 1 ? 's ' : ' ') + e.questions.join(', ') + ')' + (a.by === 'question' ? '' : words));
       });
       lines.push('');
     });
@@ -552,18 +678,106 @@
 
   function planCsv(a, options) {
     const anon = !!(options && options.anon);
-    const head = ['student', 'section', 'points', 'points possible', 'learning target', 'missed', 'of', 'questions missed', 'target wording'];
+    const head = ['student', 'section', 'points', 'points possible', (a.byLabel || 'Learning target').toLowerCase(), 'missed', 'of', 'questions missed', 'wording'];
     const out = [head.map(csvCell).join(',')];
     a.students.filter(s => s.took).forEach(s => {
       const base = [display(s, anon), anon ? '' : s.section, s.earned, s.possible];
       if (!s.targetsMissed.length) out.push(base.concat(['(none)', 0, '', '', '']).map(csvCell).join(','));
       s.targetsMissed.forEach(e => {
         const t = a.targets.find(x => x.lt === e.lt);
-        out.push(base.concat([e.lt, e.missed, e.of, e.questions.join(' '), t ? t.text : '']).map(csvCell).join(','));
+        out.push(base.concat([e.lt, e.missed, e.of, e.questions.join(' '), t && !(anon && a.by === 'question') ? t.text : '']).map(csvCell).join(','));
       });
     });
     return out.join('\r\n') + '\r\n';
   }
 
-  return { VERSION, MAP_FORMAT, MAP_FORMATS, parseCsv, csvCell, norm, plain, display, parseMap, readExport, match, analyze, planText, planCsv };
+  // The class report: one row per topic (or target, or question), most missed first.
+  function reportRows(a) {
+    return a.targets.slice().sort((x, y) => ((x.pct == null ? 2 : x.pct) - (y.pct == null ? 2 : y.pct)) || (y.needCount - x.needCount)
+      || x.lt.localeCompare(y.lt, 'en', { numeric: true }));
+  }
+  function reportCsv(a, options) {
+    const anon = !!(options && options.anon);
+    const head = [a.byLabel.toLowerCase(), 'wording', 'questions', 'percent correct', 'answers correct', 'answers counted', 'students to retake'];
+    const out = [head.map(csvCell).join(',')];
+    reportRows(a).forEach(t => {
+      // Projector safe: a question's own wording is the test, so it stays out.
+      const words = anon && a.by === 'question' ? '' : t.text;
+      out.push([t.lt, words, t.questions.join(' '), t.pct == null ? '' : Math.round(t.pct * 100), t.correct, t.answered, t.needCount].map(csvCell).join(','));
+    });
+    return out.join('\r\n') + '\r\n';
+  }
+
+  /* ── retake questions: a prompt for the teacher's own AI ──────────────── */
+
+  // Jeff, 2026-11-21: the planner writes the prompt and the teacher pastes it into
+  // whichever AI they use, so nothing leaves this page by itself. A prompt never
+  // carries a student's name or id: students are "Student 3", the number every
+  // panel shows. It carries the questions the student missed, the answer they chose
+  // and, when known, the correct answer, because that is what lets the AI ask about
+  // the same idea without asking the same question.
+  const STYLES = ['retake', 'corrections'];
+  function missedFor(a, s) {
+    return s.results.filter(r => r.status === 'wrong' || r.status === 'blank').map(r => {
+      const key = groupKey(a.by, r.q);
+      const t = a.targets.find(x => x.lt === key);
+      return { r, key, words: t ? t.text : '', lt: r.q.lt, ltWords: (t && t.within.find(w => w.lt === r.q.lt) || {}).text || '' };
+    });
+  }
+  function describeMiss(a, m, i) {
+    const q = m.r.q;
+    const lines = [(i + 1) + '. ' + (a.by === 'question' ? 'Question ' + q.n : a.byLabel + ' ' + m.key + (m.words ? ' (' + m.words + ')' : '') + ', question ' + q.n)];
+    if (a.by === 'topic' && m.ltWords) lines.push('   Learning target: ' + m.lt + ', ' + m.ltWords);
+    else if (a.by === 'lt' && m.words) lines.push('   Learning target: ' + m.words);
+    if (q.source) lines.push('   It was about this source: ' + plain(q.source));
+    lines.push('   Question: ' + plain(q.stem));
+    lines.push('   The student ' + (m.r.status === 'blank' ? 'left it blank.' : 'chose: ' + plain(m.r.response)));
+    if (q.answer >= 0 && q.options[q.answer]) lines.push('   The correct answer: ' + plain(q.options[q.answer]));
+    if (q.rationale) lines.push('   Why the other answers are wrong: ' + plain(q.rationale));
+    return lines.join('\n');
+  }
+  function instructions(style, count, many) {
+    const who = many ? 'each student below' : 'this student';
+    if (style === 'corrections') {
+      return [
+        'Write test corrections for ' + who + '. For every question listed, write one open-ended correction prompt that asks the student to explain, in their own words, why the answer they chose is not the best answer and which idea the best answer depends on.',
+        'Do not give the correct answer away in the prompt. Do not write multiple-choice questions.',
+        'After each prompt, add "What a strong answer includes:" with two or three short points for the teacher.'
+      ];
+    }
+    return [
+      'Write ' + count + ' new open-ended retake question' + (count > 1 ? 's' : '') + ' for ' + who + '. Each question must check the same understanding the missed questions checked, but must not repeat those questions, their wording or their answer choices.',
+      'Spread the questions across what the student missed, giving more to the topics or targets with more misses.',
+      'Each question should ask the student to explain, with specific evidence, in a short paragraph. Do not write multiple-choice questions. Match the reading level of the original questions.',
+      'After each question, add "What a strong answer includes:" with two or three short points for the teacher.'
+    ];
+  }
+  function header(a, style) {
+    return 'I am a teacher. My students took a multiple-choice test, ' + a.title + ', and I am giving them ' +
+      (style === 'corrections' ? 'test corrections' : 'a retake') + ' on what they missed. Student names are left out on purpose.';
+  }
+  function retakePrompt(a, s, options) {
+    const o = options || {};
+    const style = STYLES.includes(o.style) ? o.style : 'retake';
+    const count = Math.max(1, Math.min(10, Math.round(Number(o.count) || 3)));
+    const missed = missedFor(a, s);
+    if (!missed.length) return '';
+    return [header(a, style), '', ...instructions(style, count, false), '',
+      'Student ' + s.n + ' missed these questions:', '', missed.map((m, i) => describeMiss(a, m, i)).join('\n\n'), ''].join('\n');
+  }
+  // One prompt for the whole class: one paste, every student's questions back,
+  // each under the student's number.
+  function classPrompt(a, options) {
+    const o = options || {};
+    const style = STYLES.includes(o.style) ? o.style : 'retake';
+    const count = Math.max(1, Math.min(10, Math.round(Number(o.count) || 3)));
+    const who = a.students.filter(s => s.took && missedFor(a, s).length);
+    if (!who.length) return '';
+    return [header(a, style), '', ...instructions(style, count, true),
+      'Put each student\'s questions under a heading with their student number, for example "Student 3".', '',
+      who.map(s => '=== Student ' + s.n + ' ===\n' + missedFor(a, s).map((m, i) => describeMiss(a, m, i)).join('\n\n')).join('\n\n'), ''].join('\n');
+  }
+
+  return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, match, mapFromExport, analyze,
+    planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
 });

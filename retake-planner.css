@@ -17,6 +17,14 @@
   --steel:#17191A; --steel-2:#22262A; --gold:#C9A46A; --paper:#FFFDF7; --green:#1B3A2D; --iron:#5A5F5C;
   --bg:#F2F0EA; --surface:var(--paper); --inset:#F1EEE6; --line:#E3DFD5; --rule:#CFC8B8;
   --gold-soft:#F4EAD8; --gold-ink:#6B5124; --green-soft:#E3ECE6;
+  /* Right and wrong on the heat map (2026-11-23). The brand has no red, and a heat map
+     read at a glance needs one, so wrong is a brick red kept dark enough for white marks:
+     Paper on --right 12.2:1 (it is Fairway Green), Paper on --wrong 7.3:1, on the striped blank 5.3:1. Each cell also
+     carries a mark, so the map does not depend on colour alone.
+     Five bands for class percentages, mostly missed (1) to mostly right (5), each with
+     Steel text at 7:1 or better. */
+  --right:#1B3A2D; --wrong:#9E2B1F;
+  --b1:#F2C9C2; --b2:#F6DDC6; --b3:#F4EAD8; --b4:#D9E7DC; --b5:#B9D3C1;
   --on-dark:#FFFDF7; --on-dark-muted:#B9BCB8;
   --head:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
   --text:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -128,7 +136,7 @@ nav.tabs button[aria-selected="true"]{background:var(--steel);border-color:var(-
 .target .wording{font-size:14px;line-height:1.6}
 .bar{display:flex;align-items:center;gap:10px}
 .bar .track{flex:1;max-width:320px;height:8px;border-radius:4px;background:var(--inset);overflow:hidden}
-.bar .fill{height:100%;background:var(--green)}
+.bar .fill{display:block;height:100%;background:var(--green)}
 .bar b{font-family:var(--head);font-variant-numeric:tabular-nums;font-size:13px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;background:var(--paper)}
@@ -156,3 +164,59 @@ p.reveal{margin-top:6px}
 pre.copytext{white-space:pre-wrap;margin:8px 0 0;font-family:var(--text);font-size:12.5px}
 footer{color:var(--iron);font-size:12px;padding:0 0 32px}
 footer .al-wordmark{color:var(--steel);font-size:12px}
+
+/* heat map */
+.heat-scroll{max-height:72vh;overflow:auto}
+table.heat{width:auto;font-size:12px;border-collapse:separate;border-spacing:0}
+table.heat th,table.heat td{padding:0;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
+table.heat thead th{position:sticky;top:0;z-index:2;padding:6px 4px;letter-spacing:.04em}
+table.heat thead tr + tr th{top:27px}
+table.heat th.grp{border-left:2px solid var(--rule);color:var(--steel)}
+table.heat th.grp:first-of-type{border-left:0}
+table.heat th.who{position:sticky;left:0;z-index:1;background:var(--paper);text-align:left;padding:6px 12px;font-family:var(--text);font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--steel);font-weight:600;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+table.heat thead th.who{z-index:3;background:var(--inset);font-family:var(--head);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--iron)}
+table.heat td.score{padding:6px 10px;font-weight:700}
+table.heat th.qn{min-width:28px;font-size:10.5px}
+.cell{width:28px;min-width:28px;height:28px;font-weight:800;font-size:13px;border-right:1px solid var(--paper)}
+.cell.right{background:var(--right);color:var(--paper)}
+.cell.wrong{background:var(--wrong);color:var(--paper)}
+.cell.blank{background:repeating-linear-gradient(135deg,var(--wrong) 0 5px,#B5463A 5px 9px)}
+.cell.none{background:var(--inset)}
+.edge{border-left:2px solid var(--rule)!important}
+table.heat tfoot th,table.heat tfoot td{border-top:2px solid var(--steel);border-bottom:0;font-weight:700}
+.cell.pct{font-size:10.5px;color:var(--steel)}
+.band-1{background:var(--b1)}.band-2{background:var(--b2)}.band-3{background:var(--b3)}.band-4{background:var(--b4)}.band-5{background:var(--b5)}.band-na{background:var(--inset)}
+.bar .fill.band-1{background:var(--wrong)}.bar .fill.band-2{background:#B7652B}.bar .fill.band-3{background:var(--gold)}.bar .fill.band-4{background:#4F7A61}.bar .fill.band-5{background:var(--right)}
+.key{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;border-radius:4px;color:var(--paper);font-weight:800;font-size:11px}
+.key.right{background:var(--right)}.key.wrong{background:var(--wrong)}
+
+/* class report */
+.report-head{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;margin-bottom:10px}
+.report-head p{max-width:70ch}
+table.report .wording{font-size:13px;line-height:1.5;margin-top:2px;max-width:62ch}
+ul.within{margin:6px 0 0;padding-left:18px;display:grid;gap:3px;font-size:12.5px;color:var(--iron);max-width:70ch}
+ul.within b{color:var(--steel)}
+table.report .bar .track{min-width:110px}
+h3.sub{margin:18px 0 10px}
+
+/* retake prompts */
+.prompt-tools{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;margin-bottom:12px}
+.prompt-tools .right{margin-left:auto}
+ol.howto{margin:0 0 12px;padding-left:20px;display:grid;gap:4px;font-size:13px;max-width:80ch}
+.prompts{display:grid;gap:10px}
+.prompt{border:1px solid var(--line);border-radius:14px;background:var(--paper);padding:12px 16px;display:grid;gap:8px}
+.prompt details{flex:1;min-width:0}
+.prompt summary{cursor:pointer;font-family:var(--head);font-weight:700;font-size:12.5px;color:var(--gold-ink);padding:8px 0}
+pre.prompt-text{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;padding:12px 14px;background:var(--inset);border-radius:10px;font-family:var(--text);font-size:12.5px;line-height:1.55;max-height:420px;overflow:auto}
+
+/* printing: the view on screen, without the page's furniture */
+@media print{
+  body{background:#fff;font-size:11px}
+  .topbar,.hero,#load-title,.panel:not(#results),#status,.toolbar,nav.tabs,footer,.prompt-tools,.btn,#anon-note{display:none!important}
+  .panel{border:0;box-shadow:none;padding:0}
+  .scroller,.heat-scroll{overflow:visible;max-height:none;border:0}
+  table.heat thead th,table.heat th.who{position:static}
+  .cell,.band-1,.band-2,.band-3,.band-4,.band-5,.key,.bar .fill{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  details{display:block}
+  .target,.prompt,tr{break-inside:avoid}
+}

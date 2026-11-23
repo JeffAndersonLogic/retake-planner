@@ -3,6 +3,10 @@
  * Nothing is written to localStorage, sent, or logged. The engine
  * (retake-planner-engine.js) does the reading and counting; this file draws it.
  *
+ * Views (Jeff, 2026-11-21): a right-or-wrong heat map, a class report by topic, the
+ * student and question tables, and the retake questions, which are prompts the teacher
+ * copies into their own AI. The page itself never contacts an AI.
+ *
  * Every string from a file (a student's name, an answer, a question) is escaped
  * before it reaches the page. */
 (function () {
@@ -12,7 +16,10 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pct = x => (x == null ? 'n/a' : Math.round(x * 100) + '%');
 
-  const state = { exportText: null, exportName: '', mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'targets', demo: false };
+  const state = {
+    exportText: null, exportName: '', mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
+    by: 'topic', style: 'retake', count: 3
+  };
   let model = null; // { map, exp, matched, analysis }
 
   /* ── demo: invented questions, invented students ──────────────────────── */
@@ -34,7 +41,7 @@
         answer: (n * 3) % 4, points: 2, rationale: 'Invented. Real maps carry the reason each wrong choice is wrong.'
       });
     }
-    const map = { format: E.MAP_FORMAT, title: 'Demo test (invented)', version: 'demo', targets, questions };
+    const map = { format: E.MAP_FORMAT, title: 'Demo test (invented)', version: 'demo', topics: { 'D.1': 'Invented topic one', 'D.2': 'Invented topic two' }, targets, questions };
     const names = ['Avery Demo', 'Blake Demo', 'Casey Demo', 'Devon Demo', 'Emery Demo', 'Finley Demo', 'Harper Demo', 'Jordan Demo', 'Kai Demo', 'Logan Demo', 'Morgan Demo', 'Quinn Demo'];
     // Canvas order is shuffled on purpose: the page must not depend on it.
     const order = [3, 0, 6, 1, 7, 4, 2, 5];
@@ -83,17 +90,23 @@
     rebuild();
   }
 
+  const MAP_IDLE = 'Not loaded. Adds topics, learning targets and correct answers. Without it you still see right and wrong on every question.';
   function fileState() {
-    const ex = $('f-export'); const mp = $('f-map');
-    ex.classList.toggle('ready', !!state.exportText);
-    mp.classList.toggle('ready', !!state.mapText);
+    $('f-export').classList.toggle('ready', !!state.exportText);
+    $('f-map').classList.toggle('ready', !!state.mapText);
     $('f-export-state').textContent = state.exportText ? 'Loaded: ' + state.exportName : 'Not loaded. A .csv file from the quiz\'s Student Analysis report.';
-    $('f-map-state').textContent = state.mapText ? 'Loaded: ' + state.mapName : 'Not loaded. A file ending in Retake-Map.json, from your department\'s shared folder.';
+    $('f-map-state').textContent = state.mapText ? 'Loaded: ' + state.mapName : MAP_IDLE;
     $('clear').hidden = !(state.exportText || state.mapText);
   }
 
   function showStatus(items) {
     $('status').innerHTML = items.map(i => '<div class="notice ' + i.kind + '">' + i.html + '</div>').join('');
+  }
+  function hideResults() { $('results').hidden = true; stats(null); }
+  // "Era 2 Exam Student Analysis Report.csv" names the test well enough for a prompt.
+  function titleFromFile(name) {
+    const t = String(name || '').replace(/\.[a-z]+$/i, '').replace(/[_]+/g, ' ').replace(/\s*student analysis( report)?\s*/i, ' ').trim();
+    return t || 'this test';
   }
 
   function rebuild() {
@@ -101,10 +114,13 @@
     model = null;
     const notices = [];
     let map = null;
+    let mapRefused = false;
     if (state.mapText) {
       const pm = E.parseMap(state.mapText);
-      if (!pm.map) notices.push({ kind: 'warn', html: '<b>The question map could not be used.</b><ul>' + pm.problems.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' });
-      else {
+      if (!pm.map) {
+        mapRefused = true;
+        notices.push({ kind: 'warn', html: '<b>The question map could not be used.</b><ul>' + pm.problems.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' });
+      } else {
         map = pm.map;
         if (pm.warnings.length) notices.push({ kind: 'warn', html: '<b>About the question map:</b><ul>' + pm.warnings.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' });
       }
@@ -117,31 +133,47 @@
         exp = null;
       }
     }
-    if (!map || !exp) {
-      if (!notices.length && (state.mapText || state.exportText)) notices.push({ kind: 'ok', html: 'One file loaded. Add the ' + (state.mapText ? 'Canvas results' : 'question map') + ' to see the plan.' });
+    if (!exp || mapRefused) {
+      if (!notices.length && state.mapText) notices.push({ kind: 'ok', html: 'Question map loaded. Add the Canvas results to see the plan.' });
       showStatus(notices);
-      $('results').hidden = true;
-      stats(null);
+      hideResults();
       return;
     }
-    const matched = E.match(map, exp);
-    const total = map.questions.length;
-    const placed = matched.pairs.length;
     const head = state.demo ? '<b>Demo.</b> Every student and question here is invented. ' : '';
-    if (!placed) {
-      notices.push({ kind: 'warn', html: head + '<b>None of the Canvas questions matched this map.</b> Check that the map is for the same test (' + esc(map.title) + ') as the Canvas file.' });
-      showStatus(notices);
-      $('results').hidden = true;
-      stats(null);
-      return;
+    let matched;
+    if (map) {
+      matched = E.match(map, exp);
+      const total = map.questions.length;
+      const placed = matched.pairs.length;
+      if (!placed) {
+        notices.push({ kind: 'warn', html: head + '<b>None of the Canvas questions matched this map.</b> Check that the map is for the same test (' + esc(map.title) + ') as the Canvas file.' });
+        showStatus(notices);
+        hideResults();
+        return;
+      }
+      const sum = head + 'Matched <b>' + placed + ' of ' + total + '</b> questions in ' + esc(map.title) + (map.version && map.version !== 'demo' ? ' (Version ' + esc(map.version) + ')' : '') + ' to the Canvas file (' + (exp.layout === 'long' ? 'one row per answer' : 'one row per student') + ').';
+      const problems = [];
+      if (matched.unmatchedQuestions.length) problems.push('Not found in the Canvas file, so left out of every count: question' + (matched.unmatchedQuestions.length > 1 ? 's ' : ' ') + matched.unmatchedQuestions.map(q => q.n).join(', ') + '.');
+      const stray = matched.unmatchedItems.filter(i => i.answered > 0);
+      if (stray.length) problems.push(stray.length + ' Canvas column(s) with answers in them did not match any question in the map, for example "' + esc(stray[0].label.slice(0, 80)) + '".');
+      matched.pairs.filter(p => p.partial).forEach(p => problems.push('Question ' + p.q.n + ' was matched, but some answers in that column are not among its choices (' + esc(p.how) + ').'));
+      notices.push({ kind: problems.length ? 'warn' : 'ok', html: sum + (problems.length ? '<ul>' + problems.map(p => '<li>' + p + '</li>').join('') + '</ul>' : '') });
+    } else {
+      // No map: Canvas's own points decide right and wrong, question by question.
+      const k = E.mapFromExport(exp, titleFromFile(state.exportName));
+      if (!k.map) {
+        notices.push({ kind: 'warn', html: '<b>' + esc(k.problem) + '</b> Add the test\'s question map.' });
+        showStatus(notices);
+        hideResults();
+        return;
+      }
+      map = k.map;
+      matched = k.matched;
+      const skipped = exp.items.length - map.questions.length;
+      notices.push({ kind: 'ok', html: head + 'Read <b>' + map.questions.length + ' question' + (map.questions.length === 1 ? '' : 's') + '</b> from the Canvas file, scored by Canvas.'
+        + (skipped > 0 ? ' ' + skipped + ' column(s) had no points and were left out.' : '')
+        + ' Canvas\'s file does not say which topic each question is on, so the results are by question. Add the test\'s question map to group them by topic or learning target.' });
     }
-    const sum = head + 'Matched <b>' + placed + ' of ' + total + '</b> questions in ' + esc(map.title) + (map.version && map.version !== 'demo' ? ' (Version ' + esc(map.version) + ')' : '') + ' to the Canvas file (' + (exp.layout === 'long' ? 'one row per answer' : 'one row per student') + ').';
-    const problems = [];
-    if (matched.unmatchedQuestions.length) problems.push('Not found in the Canvas file, so left out of every count: question' + (matched.unmatchedQuestions.length > 1 ? 's ' : ' ') + matched.unmatchedQuestions.map(q => q.n).join(', ') + '.');
-    const stray = matched.unmatchedItems.filter(i => i.answered > 0);
-    if (stray.length) problems.push(stray.length + ' Canvas column(s) with answers in them did not match any question in the map, for example "' + esc(stray[0].label.slice(0, 80)) + '".');
-    matched.pairs.filter(p => p.partial).forEach(p => problems.push('Question ' + p.q.n + ' was matched, but some answers in that column are not among its choices (' + esc(p.how) + ').'));
-    notices.push({ kind: problems.length ? 'warn' : 'ok', html: sum + (problems.length ? '<ul>' + problems.map(p => '<li>' + p + '</li>').join('') + '</ul>' : '') });
     exp.notes.forEach(n => notices.push({ kind: 'ok', html: esc(n) }));
     model = { map, exp, matched };
     // Classes, for a department file holding several sections.
@@ -149,6 +181,10 @@
     $('section-wrap').hidden = sections.length < 2;
     if (!sections.includes(state.section)) state.section = '';
     $('section').innerHTML = '<option value="">All classes</option>' + sections.map(s => '<option' + (s === state.section ? ' selected' : '') + ' value="' + esc(s) + '">' + esc(s) + '</option>').join('');
+    // Grouping: only the choices this map can give.
+    const hasTopic = !map.keyless && map.questions.some(q => q.topic);
+    $('by-wrap').hidden = !!map.keyless;
+    $('by').querySelector('[data-v="topic"]').hidden = !hasTopic;
     model.baseNotices = notices;
     draw();
   }
@@ -163,60 +199,168 @@
 
   function who(s) { return E.display(s, state.anon); }
   function hidden() { return '<span class="hidden-note">hidden on the projector</span>'; }
+  // A group's name as a person reads it: "Topic 3.1, Empires Expand", "3.1 LT2", "Q7".
+  function groupName(a, key, words) {
+    if (a.by === 'topic') return 'Topic ' + key + (words ? ', ' + words : '');
+    if (a.by === 'question') return 'Question ' + key.replace(/^Q/, '');
+    return key;
+  }
+  // Wording that is the test itself (a question's stem) never reaches the projector.
+  function wordsShown(a, t) { return a.by === 'question' ? (state.anon ? '' : t.text) : t.text; }
 
   function draw() {
     if (!model) return;
-    const a = E.analyze(model.map, model.exp, model.matched, { rule: state.rule, section: state.section });
+    const a = E.analyze(model.map, model.exp, model.matched, { rule: state.rule, section: state.section, by: state.by });
     model.analysis = a;
     showStatus(model.baseNotices.concat(a.notes.map(n => ({ kind: 'warn', html: esc(n) }))));
     stats(a);
     $('results').hidden = false;
     $('anon-note').hidden = !state.anon;
-    const byKey = new Map(a.students.map(s => [s.key, s]));
-    const took = a.students.filter(s => s.took);
-
-    // By learning target: the retake-writing view. One card per target, weakest first.
-    const ts = a.targets.slice().sort((x, y) => (y.needCount - x.needCount) || ((x.pct == null ? 2 : x.pct) - (y.pct == null ? 2 : y.pct)));
-    $('view-targets').innerHTML = '<p class="muted small intro">Each target lists the students who need new questions on it. Write retake questions for the targets at the top first.</p><div class="targets">' + ts.map(t => {
-      const names = t.need.map(k => byKey.get(k)).filter(Boolean);
-      return '<article class="target"><div class="target-head"><span class="lt">' + esc(t.lt) + '</span><span class="muted small">Question' + (t.questions.length > 1 ? 's ' : ' ') + esc(t.questions.join(', ')) + '</span></div>'
-        + (t.text ? '<p class="wording">' + esc(t.text) + '</p>' : '')
-        + '<div class="bar"><span class="track"><span class="fill" data-w="' + (t.pct == null ? 0 : Math.round(t.pct * 100)) + '"></span></span><b>' + pct(t.pct) + ' correct</b></div>'
-        + '<div><span class="ctl-label">' + names.length + ' to retake</span></div>'
-        + (names.length ? '<div class="chips">' + names.map(s => '<span class="chip need">' + esc(who(s)) + '</span>').join('') + '</div>' : '<p class="empty">Nobody needs a retake on this target.</p>')
-        + '</article>';
-    }).join('') + '</div>';
-
+    $('by').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === a.by)));
+    $('rule-label').textContent = 'Retake a ' + a.byLabel.toLowerCase() + ' when the student';
+    drawHeat(a);
+    drawReport(a);
+    drawStudents(a);
+    drawQuestions(a);
+    drawPrompts(a);
+    drawGroups(a);
     // Widths through the style object: the page's lock refuses inline style attributes.
-    $('view-targets').querySelectorAll('[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+    $('results').querySelectorAll('[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+  }
 
-    // By student.
-    $('view-students').innerHTML = took.length ? '<div class="scroller"><table><thead><tr><th scope="col">Student</th>' + (state.anon ? '' : '<th scope="col">Class</th>') + '<th scope="col">Score</th><th scope="col">Targets to retake</th><th scope="col">Missed questions</th></tr></thead><tbody>'
+  // The heat map: one row per student, one column per question, grouped under its
+  // topic. Every cell is right or wrong, because the test is multiple choice
+  // (Jeff, 2026-11-21); a blank counts as wrong and says so; a question the student
+  // never saw is left empty.
+  function drawHeat(a) {
+    const took = a.students.filter(s => s.took);
+    if (!took.length) { $('view-heat').innerHTML = '<p class="empty">No student in this class has answers in the file.</p>'; return; }
+    const cols = a.columns;
+    let h = '<p class="muted small intro">Each square is one student on one question: <span class="key right" aria-hidden="true">✓</span> right, <span class="key wrong" aria-hidden="true">✗</span> wrong or left blank. Columns are grouped by ' + esc(a.byLabel.toLowerCase()) + '; the bottom row is the class.</p>';
+    h += '<div class="scroller heat-scroll"><table class="heat"><thead>';
+    if (a.by !== 'question') {
+      h += '<tr><th scope="col" class="who" rowspan="2">Student</th><th scope="col" class="score" rowspan="2">Score</th>'
+        + cols.map(c => '<th scope="colgroup" class="grp" colspan="' + c.cols.length + '" title="' + esc(groupName(a, c.key, (a.targets.find(t => t.lt === c.key) || {}).text)) + '">' + esc(c.key) + '</th>').join('') + '</tr><tr>';
+    } else {
+      h += '<tr><th scope="col" class="who">Student</th><th scope="col" class="score">Score</th>';
+    }
+    cols.forEach((c, ci) => c.cols.forEach((i, k) => { h += '<th scope="col" class="qn' + (k === 0 && ci > 0 ? ' edge' : '') + '">' + esc(a.questions[i].q.n) + '</th>'; }));
+    h += '</tr></thead><tbody>';
+    took.forEach(s => {
+      const score = s.possible ? s.earned / s.possible : null;
+      h += '<tr><th scope="row" class="who">' + esc(who(s)) + '</th><td class="score num">' + pct(score) + '</td>';
+      cols.forEach((c, ci) => c.cols.forEach((i, k) => {
+        const r = s.results[i];
+        const edge = k === 0 && ci > 0 ? ' edge' : '';
+        const label = who(s) + ', question ' + r.q.n + ': ';
+        if (r.status === 'correct') h += '<td class="cell right' + edge + '" title="' + esc(label + 'right') + '">✓</td>';
+        else if (r.status === 'wrong') h += '<td class="cell wrong' + edge + '" title="' + esc(label + 'wrong') + '">✗</td>';
+        else if (r.status === 'blank') h += '<td class="cell wrong blank' + edge + '" title="' + esc(label + 'left blank') + '">✗</td>';
+        else h += '<td class="cell none' + edge + '" title="' + esc(label + 'not counted') + '"></td>';
+      }));
+      h += '</tr>';
+    });
+    h += '</tbody><tfoot><tr><th scope="row" class="who">Class</th><td class="score num">' + pct(classAverage(a)) + '</td>';
+    cols.forEach((c, ci) => c.cols.forEach((i, k) => {
+      const x = a.questions[i];
+      h += '<td class="cell pct band-' + band(x.pct) + (k === 0 && ci > 0 ? ' edge' : '') + '" title="' + esc('Question ' + x.q.n + ': ' + pct(x.pct) + ' right') + '">' + (x.pct == null ? '' : Math.round(x.pct * 100)) + '</td>';
+    }));
+    h += '</tr></tfoot></table></div>';
+    $('view-heat').innerHTML = h;
+  }
+  function classAverage(a) {
+    const took = a.students.filter(s => s.took);
+    return took.length ? took.reduce((t, s) => t + (s.possible ? s.earned / s.possible : 0), 0) / took.length : null;
+  }
+  // Five bands for the class row and the report, from mostly missed to mostly right.
+  function band(p) { return p == null ? 'na' : p < 0.4 ? 1 : p < 0.6 ? 2 : p < 0.75 ? 3 : p < 0.9 ? 4 : 5; }
+
+  // The class report: every topic (or target, or question), most missed first, then
+  // who needs each one.
+  function drawReport(a) {
+    const byKey = new Map(a.students.map(s => [s.key, s]));
+    const rows = E.reportRows(a);
+    let h = '<div class="report-head"><p class="muted small">' + esc(a.title) + ': ' + a.took + ' student' + (a.took === 1 ? '' : 's') + ', class average ' + pct(classAverage(a)) + '. ' + esc(a.byLabel) + 's are listed from most missed to least. Write retake questions for the ones at the top first.</p>'
+      + '<button class="btn" type="button" id="download-report">Download the report (CSV)</button></div>';
+    h += '<div class="scroller"><table class="report"><thead><tr><th scope="col">' + esc(a.byLabel) + '</th><th scope="col">Questions</th><th scope="col">Correct</th><th scope="col">Students to retake</th></tr></thead><tbody>'
+      + rows.map(t => {
+        const words = wordsShown(a, t);
+        return '<tr><td><b>' + esc(a.by === 'topic' ? 'Topic ' + t.lt : (a.by === 'question' ? 'Question ' + t.lt.replace(/^Q/, '') : t.lt)) + '</b>' + (words ? '<div class="wording">' + esc(words) + '</div>' : (a.by === 'question' && state.anon ? '<div>' + hidden() + '</div>' : ''))
+          + (t.within.length ? '<ul class="within">' + t.within.map(w => '<li><b>' + esc(w.lt) + '</b> ' + esc(w.text) + '</li>').join('') + '</ul>' : '') + '</td>'
+          + '<td class="num">' + esc(t.questions.join(', ')) + '</td>'
+          + '<td><div class="bar"><span class="track"><span class="fill band-' + band(t.pct) + '" data-w="' + (t.pct == null ? 0 : Math.round(t.pct * 100)) + '"></span></span><b>' + pct(t.pct) + '</b></div><span class="muted small">' + t.correct + ' of ' + t.answered + ' answers</span></td>'
+          + '<td class="num">' + t.needCount + ' of ' + a.took + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    h += '<h3 class="sub">Who needs each ' + esc(a.byLabel.toLowerCase()) + '</h3><div class="targets">' + rows.filter(t => t.needCount).map(t => {
+      const names = t.need.map(k => byKey.get(k)).filter(Boolean);
+      return '<article class="target"><div class="target-head"><span class="lt">' + esc(groupName(a, t.lt, a.by === 'question' ? '' : t.text)) + '</span><span class="muted small">' + names.length + ' to retake</span></div>'
+        + '<div class="chips">' + names.map(s => '<span class="chip need">' + esc(who(s)) + '</span>').join('') + '</div></article>';
+    }).join('') + '</div>';
+    if (!rows.some(t => t.needCount)) h += '<p class="empty">Nobody needs a retake.</p>';
+    $('view-targets').innerHTML = h;
+    $('download-report').addEventListener('click', () => save(E.reportCsv(a, { anon: state.anon }), '-Class-Report.csv'));
+  }
+
+  function drawStudents(a) {
+    const took = a.students.filter(s => s.took);
+    $('view-students').innerHTML = took.length ? '<div class="scroller"><table><thead><tr><th scope="col">Student</th>' + (state.anon ? '' : '<th scope="col">Class</th>') + '<th scope="col">Score</th><th scope="col">' + esc(a.byLabel) + 's to retake</th><th scope="col">Missed questions</th></tr></thead><tbody>'
       + took.map(s => {
         const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank');
-        const detail = missed.length ? '<details><summary>' + missed.length + ' missed</summary><ul class="misslist">' + missed.map(r => '<li><span class="mark ' + r.status + '">Q' + esc(r.q.n) + '</span> ' + esc(r.q.lt) + ': '
+        const detail = missed.length ? '<details><summary>' + missed.length + ' missed</summary><ul class="misslist">' + missed.map(r => '<li><span class="mark ' + r.status + '">Q' + esc(r.q.n) + '</span> ' + (a.keyless ? '' : esc(a.by === 'topic' && r.q.topic ? 'Topic ' + r.q.topic + ', ' + r.q.lt : r.q.lt) + ': ')
           + (r.status === 'blank' ? 'left blank' : (state.anon ? hidden() : '<span class="answer">chose “' + esc(r.response) + '”</span>')) + '</li>').join('') + '</ul></details>' : '<span class="empty">none</span>';
         return '<tr><td>' + esc(who(s)) + '</td>' + (state.anon ? '' : '<td>' + esc(s.section) + '</td>') + '<td class="num">' + s.earned + ' / ' + s.possible + '</td><td>'
           + (s.targetsMissed.length ? '<div class="chips">' + s.targetsMissed.map(e => '<span class="chip lt" title="missed ' + e.missed + ' of ' + e.of + '">' + esc(e.lt) + ' · ' + e.missed + '/' + e.of + '</span>').join('') + '</div>' : '<span class="empty">nothing to retake</span>')
           + '</td><td>' + detail + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<p class="empty">No student in this class has answers in the file.</p>';
+  }
 
-    // By question.
-    $('view-questions').innerHTML = '<p class="muted small intro">Numbered as in the question map (the teacher key\'s order), not Canvas\'s order. The most-chosen wrong answer usually names the misunderstanding to reteach.</p><div class="scroller"><table><thead><tr><th scope="col">Q</th><th scope="col">Target</th><th scope="col">Correct</th><th scope="col">Most-chosen wrong answer</th><th scope="col">Why the wrong answers are wrong</th></tr></thead><tbody>'
-      + a.questions.map(x => '<tr><td class="num">' + esc(x.q.n) + '</td><td>' + esc(x.q.lt) + '</td><td class="num">' + pct(x.pct) + ' <span class="muted small">(' + x.correct + ' of ' + x.answered + ')</span></td><td>'
-        + (x.topWrong ? (state.anon ? hidden() : '<span class="answer">' + esc(x.topWrong.text) + '</span>') + ' <span class="muted small">(' + x.topWrong.count + ')</span>' : '<span class="empty">none</span>')
-        + '</td><td>' + (x.q.rationale ? (state.anon ? hidden() : '<details><summary>Show</summary><p class="answer reveal">' + esc(x.q.rationale) + '</p></details>') : '<span class="empty">not in the map</span>') + '</td></tr>').join('')
+  function drawQuestions(a) {
+    $('view-questions').innerHTML = '<p class="muted small intro">' + (a.keyless ? 'Numbered in the order of the Canvas file.' : 'Numbered as in the question map (the teacher key\'s order), not Canvas\'s order.') + ' The most-chosen wrong answer usually names the misunderstanding to reteach.</p><div class="scroller"><table><thead><tr><th scope="col">Q</th>'
+      + (a.keyless ? '<th scope="col">Question</th>' : '<th scope="col">' + (a.by === 'topic' ? 'Topic' : 'Target') + '</th>') + '<th scope="col">Correct</th><th scope="col">Most-chosen wrong answer</th>' + (a.keyless ? '' : '<th scope="col">Why the wrong answers are wrong</th>') + '</tr></thead><tbody>'
+      + a.questions.map(x => '<tr><td class="num">' + esc(x.q.n) + '</td><td>' + (a.keyless ? (state.anon ? hidden() : '<span class="answer">' + esc(x.q.stem) + '</span>') : esc(a.by === 'topic' && x.q.topic ? x.q.topic + ' · ' + x.q.lt : x.q.lt)) + '</td><td class="num">' + pct(x.pct) + ' <span class="muted small">(' + x.correct + ' of ' + x.answered + ')</span></td><td>'
+        + (x.topWrong ? (state.anon ? hidden() : '<span class="answer">' + esc(x.topWrong.text) + '</span>') + ' <span class="muted small">(' + x.topWrong.count + ')</span>' : '<span class="empty">none</span>') + '</td>'
+        + (a.keyless ? '' : '<td>' + (x.q.rationale ? (state.anon ? hidden() : '<details><summary>Show</summary><p class="answer reveal">' + esc(x.q.rationale) + '</p></details>') : '<span class="empty">not in the map</span>') + '</td>') + '</tr>').join('')
       + '</tbody></table></div>';
+  }
 
-    // Same retake: students whose list of targets is identical.
+  // Retake questions: the page writes a prompt; the teacher pastes it into the AI
+  // their school allows and reviews what comes back. No name is ever in a prompt.
+  function drawPrompts(a) {
+    $('count-wrap').hidden = state.style !== 'retake';
+    $('prompt-tools').hidden = state.anon;
+    if (state.anon) {
+      $('prompt-list').innerHTML = '<p class="empty">Retake prompts are hidden on the projector: they hold the test\'s questions and answers. Turn Projector safe off to see them.</p>';
+      return;
+    }
+    const opts = { style: state.style, count: state.count };
+    const took = a.students.filter(s => s.took);
+    const withMisses = took.filter(s => E.retakePrompt(a, s, opts));
+    let h = '<ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
+    h += '<div class="prompts">' + withMisses.map(s => {
+      const text = E.retakePrompt(a, s, opts);
+      const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank').length;
+      return '<article class="prompt" data-student="' + esc(s.key) + '"><div class="target-head"><span class="lt">Student ' + s.n + (s.name && s.name !== 'Student ' + s.n ? ' · ' + esc(s.name) : '') + '</span><span class="muted small">' + missed + ' question' + (missed === 1 ? '' : 's') + ' missed'
+        + (a.keyless ? '' : ' · ' + esc(s.targetsMissed.map(e => e.lt).join(', '))) + '</span></div>'
+        + '<div class="row"><button class="btn primary copy-one" type="button">Copy prompt</button><details><summary>Show the prompt</summary><pre class="prompt-text" tabindex="0">' + esc(text) + '</pre></details></div></article>';
+    }).join('') + '</div>';
+    $('prompt-list').innerHTML = h;
+    $('prompt-list').querySelectorAll('.copy-one').forEach(btn => btn.addEventListener('click', () => {
+      const pre = btn.closest('.prompt').querySelector('.prompt-text');
+      copyText(pre.textContent, btn, pre);
+    }));
+  }
+
+  function drawGroups(a) {
+    const byKey = new Map(a.students.map(s => [s.key, s]));
     const shared = a.groups.filter(g => g.students.length > 1);
-    $('view-groups').innerHTML = '<p class="muted small intro">Students who need exactly the same targets can take the same retake.</p>'
+    $('view-groups').innerHTML = '<p class="muted small intro">Students who need exactly the same ' + esc(a.byLabel.toLowerCase()) + 's can take the same retake.</p>'
       + (shared.length ? '<div class="targets">' + shared.map(g => '<article class="target"><div class="target-head"><span class="lt">' + g.students.length + ' students</span></div><div class="chips">' + g.lts.map(lt => '<span class="chip lt">' + esc(lt) + '</span>').join('') + '</div><div class="chips">' + g.students.map(k => '<span class="chip need">' + esc(who(byKey.get(k))) + '</span>').join('') + '</div></article>').join('') + '</div>'
-        : '<p class="empty">No two students need exactly the same set of targets. Use By learning target to write one set of questions per target and give each student the sets they need.</p>');
+        : '<p class="empty">No two students need exactly the same set. Use the Class report to write one set of questions per ' + esc(a.byLabel.toLowerCase()) + ' and give each student the sets they need.</p>');
   }
 
   /* ── controls ─────────────────────────────────────────────────────────── */
-  function seg(id, key, after) {
+  function seg(id, after) {
     $(id).addEventListener('click', e => {
       const b = e.target.closest('button[data-v]');
       if (!b) return;
@@ -225,11 +369,14 @@
       draw();
     });
   }
-  seg('rule', 'rule', v => { state.rule = v; });
-  seg('names', 'anon', v => { state.anon = v === 'anon'; });
+  seg('rule', v => { state.rule = v; });
+  seg('names', v => { state.anon = v === 'anon'; });
+  seg('by', v => { state.by = v; });
+  seg('style', v => { state.style = v; });
   $('section').addEventListener('change', e => { state.section = e.target.value; draw(); });
+  $('count').addEventListener('change', e => { state.count = Number(e.target.value) || 3; draw(); });
 
-  const TABS = ['targets', 'students', 'questions', 'groups'];
+  const TABS = ['heat', 'targets', 'students', 'questions', 'prompts', 'groups'];
   function selectTab(name, focus) {
     state.tab = name;
     TABS.forEach(t => {
@@ -269,9 +416,8 @@
     Object.assign(state, { exportText: null, exportName: '', mapText: null, mapName: '', section: '', demo: false });
     model = null;
     $('status').innerHTML = '';
-    $('results').hidden = true;
+    hideResults();
     fileState();
-    stats(null);
   });
 
   function flash(btn, text) {
@@ -279,27 +425,50 @@
     btn.textContent = text;
     setTimeout(() => { btn.textContent = was; }, 1800);
   }
-  $('copy').addEventListener('click', async () => {
-    if (!model || !model.analysis) return;
-    const text = E.planText(model.analysis, { anon: state.anon });
-    try { await navigator.clipboard.writeText(text); flash($('copy'), 'Copied'); }
+  // No clipboard permission (an older browser, or a file:// page): select the text so
+  // Ctrl+C copies it, or show it to copy by hand.
+  async function copyText(text, btn, pre) {
+    try { await navigator.clipboard.writeText(text); flash(btn, 'Copied'); }
     catch (e) {
-      // No clipboard permission (an older browser, or a file:// page): show the text to copy by hand.
-      showStatus(model.baseNotices.concat([{ kind: 'ok', html: '<b>Copy this by hand:</b><pre class="copytext">' + esc(text) + '</pre>' }]));
+      if (pre) {
+        const d = pre.closest('details');
+        if (d) d.open = true;
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        flash(btn, 'Selected: press Ctrl+C');
+      } else {
+        showStatus(model.baseNotices.concat([{ kind: 'ok', html: '<b>Copy this by hand:</b><pre class="copytext">' + esc(text) + '</pre>' }]));
+      }
     }
-  });
-  $('download').addEventListener('click', () => {
+  }
+  $('copy').addEventListener('click', () => {
     if (!model || !model.analysis) return;
-    const blob = new Blob(['﻿' + E.planCsv(model.analysis, { anon: state.anon })], { type: 'text/csv;charset=utf-8' });
+    copyText(E.planText(model.analysis, { anon: state.anon }), $('copy'));
+  });
+  $('copy-class').addEventListener('click', () => {
+    if (!model || !model.analysis || state.anon) return;
+    const text = E.classPrompt(model.analysis, { style: state.style, count: state.count });
+    if (text) copyText(text, $('copy-class'));
+  });
+  function save(text, suffix) {
+    const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = (model.map.title || 'Retake').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-Retake-Plan.csv';
+    link.download = (model.map.title || 'Retake').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + suffix;
     document.body.appendChild(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  $('download').addEventListener('click', () => {
+    if (!model || !model.analysis) return;
+    save(E.planCsv(model.analysis, { anon: state.anon }), '-Retake-Plan.csv');
   });
+  $('print').addEventListener('click', () => window.print());
 
   fileState();
 })();

@@ -13,6 +13,12 @@
 //   - the latest attempt is the one used;
 //   - "missed most" is never looser than "missed any";
 //   - a broken map is refused with a reason, and an unknown file is not guessed at;
+//   - the New Quizzes Student Analysis shape seen on 2026-11-23 (five columns per
+//     question, no name column) reads, with students numbered by row;
+//   - with no question map, Canvas's own points give the same right and wrong;
+//   - grouping by topic, learning target or question;
+//   - retake prompts carry no name or id, honour the question count, and list only
+//     what the student missed; the class report sorts most missed first;
 //   - negative controls show each check can fail.
 
 const assert = require('assert');
@@ -229,6 +235,178 @@ ok('per-question columns named "... - Response" and "... - Points" are read too'
   const { matched, a } = run(rows.map(r => r.map(E.csvCell).join(',')).join('\n'));
   assert.strictEqual(matched.pairs.length, 6);
   assert.strictEqual(summary(a), EXPECTED);
+});
+
+/* ── 2026-11-23: the real export shape, no-map mode, topics, prompts ─────── */
+
+// The New Quizzes Student Analysis shape, with invented questions and answers:
+// "Status, ItemID, ItemType, <wording>, EarnedPoints" per question, a summary at the
+// end, trailing empty columns, and (as pasted by Jeff) no name column.
+function studentAnalysis(opts) {
+  const o = opts || {};
+  const head = o.named ? ['Name', 'ID'] : [];
+  ORDER.forEach(i => head.push('Status', 'ItemID', 'ItemType', MAP.questions[i].stem, 'EarnedPoints'));
+  head.push('Status', 'NumberOfCorrect', 'NumberOfIncorrect', 'NoResponse', 'PointsPossible', 'OverallScore', '', '', '');
+  const rows = [head];
+  NAMES.forEach((name, s) => {
+    const r = o.named ? [name, String(s + 1)] : [];
+    ORDER.forEach(i => {
+      const q = MAP.questions[i];
+      const c = choiceFor(q, s);
+      r.push('Graded', 'item-' + i, 'Multiple Choice', q.options[c], c === q.answer ? '2' : '0');
+    });
+    r.push('Submitted', '', '', '', '12', '', '', '', '');
+    rows.push(r);
+  });
+  if (o.mutate) o.mutate(rows);
+  return rows.map(r => r.map(E.csvCell).join(',')).join('\n');
+}
+// The same summary with "Row N" in place of each name: Ann is row 2.
+const ROWS = EXPECTED.replace('Ann Invented', 'Row 2').replace('Ben Invented', 'Row 3').replace('Cat Invented', 'Row 4').replace('Dan Invented', 'Row 5');
+
+ok('the Student Analysis shape with no name column: students by row, every question placed', () => {
+  const { exp, matched, a } = run(studentAnalysis());
+  assert.strictEqual(exp.shape, 'student-analysis');
+  assert.strictEqual(exp.items.length, 6, 'Status, ItemID, ItemType and EarnedPoints are not questions');
+  assert.strictEqual(exp.items[0].type, 'Multiple Choice');
+  assert.ok(exp.notes.some(n => /no student name column/.test(n)));
+  assert.strictEqual(matched.pairs.length, 6);
+  assert.strictEqual(summary(a), ROWS);
+  assert.strictEqual(summary(run(studentAnalysis({ named: true })).a), EXPECTED, 'with names, the names are used');
+});
+
+ok('negative control: without its EarnedPoints columns, a nameless file is not guessed at', () => {
+  const csv = studentAnalysis().split('\n').map(line => line.replace(/EarnedPoints/g, 'Something'));
+  assert.strictEqual(E.readExport(csv.join('\n')).layout, 'unknown');
+});
+
+ok('two questions worded the same stay two questions in the Student Analysis shape', () => {
+  // Every invented question has the same wording; six columns must stay six.
+  const exp = E.readExport(studentAnalysis());
+  assert.strictEqual(new Set(exp.items.map(i => i.key)).size, 6);
+});
+
+ok('no question map: Canvas\'s points give the same right and wrong as the key', () => {
+  const exp = E.readExport(wide());
+  const k = E.mapFromExport(exp, 'Invented test');
+  assert.ok(k.map && k.map.keyless);
+  const a = E.analyze(k.map, exp, k.matched, {});
+  assert.strictEqual(a.by, 'question');
+  const byMap = run(wide()).a;
+  const marks = x => x.students.map(s => s.name + ':' + s.earned + '/' + s.possible + ':' + s.results.filter(r => r.status !== 'correct').length).sort().join(' | ');
+  assert.strictEqual(marks(a), marks(byMap));
+  assert.strictEqual(a.notes.filter(n => /scored differently/.test(n)).length, 0, 'no false disagreement without a key');
+  // Every invented question was answered right by someone, so each has a known answer.
+  k.map.questions.forEach(q => assert.ok(q.answer >= 0, 'Q' + q.n + ' has no inferred answer'));
+});
+
+ok('no question map: a question nobody got right is wrong for everyone, with no answer guessed', () => {
+  const col = 8 + ORDER.indexOf(0) * 2 + 1; // question 1's points
+  const exp = E.readExport(wide({ mutate: rows => rows.slice(1).forEach(r => { r[col] = '0.0'; }) }));
+  const k = E.mapFromExport(exp);
+  const q = k.matched.pairs.find(p => p.item.label.includes('source') && Object.values(p.item.responses).every(r => r.score === 0)).q;
+  assert.strictEqual(q.answer, -1);
+  const a = E.analyze(k.map, exp, k.matched, {});
+  const i = k.matched.pairs.findIndex(p => p.q === q);
+  a.students.forEach(s => assert.strictEqual(s.results[i].status, 'wrong'));
+});
+
+ok('no question map and no points: refused with a reason', () => {
+  const exp = E.readExport(wide({ mutate: rows => rows.forEach(r => { for (let c = 9; c < 8 + 12; c += 2) r[c] = ''; }) }));
+  const k = E.mapFromExport(exp);
+  assert.strictEqual(k.map, null);
+  assert.ok(/no points/.test(k.problem));
+});
+
+ok('when only points earned are given, the most anyone earned stands for full marks', () => {
+  const exp = E.readExport(studentAnalysis());
+  exp.items.forEach(it => Object.values(it.responses).forEach(r => assert.strictEqual(r.possible, 2)));
+});
+
+// Topics: questions 1 to 4 are Z.1, 5 and 6 are Z.2.
+function topicMap() {
+  const m = inventedMap();
+  m.questions.forEach(q => { q.topic = q.n <= 4 ? 'Z.1' : 'Z.2'; });
+  m.topics = { 'Z.1': 'Invented topic one' };
+  return E.parseMap(JSON.stringify(m)).map;
+}
+
+ok('grouping: topic by default when the map has topics, learning target or question on request', () => {
+  const tm = topicMap();
+  const t = run(wide(), {}, tm).a;
+  assert.strictEqual(t.by, 'topic');
+  assert.deepStrictEqual(t.targets.map(x => x.lt), ['Z.1', 'Z.2']);
+  assert.strictEqual(t.targets[0].text, 'Invented topic one');
+  assert.deepStrictEqual(t.targets[0].within.map(w => w.lt), ['Z.1 LT1', 'Z.1 LT2'], 'a topic lists its targets');
+  const dan = t.students.find(s => s.name === 'Dan Invented');
+  assert.deepStrictEqual(dan.targetsMissed.map(e => e.lt + '=' + e.questions.join('.')), ['Z.1=3.4', 'Z.2=6']);
+  assert.strictEqual(summary(run(wide(), { by: 'lt' }, tm).a), EXPECTED, 'by learning target, the original plan');
+  assert.strictEqual(run(wide(), { by: 'question' }, tm).a.targets.length, 6);
+  assert.strictEqual(run(wide(), { by: 'topic' }).a.by, 'lt', 'a map with no topics falls back to targets');
+  assert.deepStrictEqual(t.columns.map(c => c.key + ':' + c.cols.length), ['Z.1:4', 'Z.2:2'], 'heat map columns by topic');
+});
+
+ok('the class report: most missed first, and projector safe drops question wording', () => {
+  const { a } = run(wide());
+  const rows = E.reportRows(a);
+  for (let i = 1; i < rows.length; i += 1) assert.ok(rows[i - 1].pct <= rows[i].pct, 'not sorted');
+  // Z.1 LT1: 5 of 8 right. Z.2 LT1 and Z.1 LT2: 6 of 8 each; the one more students
+  // need (Z.2 LT1: Ben and Dan) comes first.
+  assert.deepStrictEqual(rows.map(r => r.lt), ['Z.1 LT1', 'Z.2 LT1', 'Z.1 LT2']);
+  const csv = E.parseCsv(E.reportCsv(a));
+  assert.strictEqual(csv[0][0], 'learning target');
+  assert.strictEqual(csv[1][3], '63');
+  const byQ = run(wide(), { by: 'question' }, topicMap()).a;
+  assert.ok(/source best illustrates/.test(E.reportCsv(byQ)), 'negative control: the wording is there by default');
+  assert.ok(!/source best illustrates/.test(E.reportCsv(byQ, { anon: true })), 'question wording leaked to the projector');
+});
+
+// A prompt must never carry a name or a student id.
+function leaks(text) { return NAMES.filter(n => text.includes(n)).concat(NAMES.map(n => n.split(' ')[0]).filter(n => text.includes(n))); }
+
+ok('a retake prompt: no names, the student number, what they missed, and the count asked for', () => {
+  const { a } = run(wide(), {}, topicMap());
+  const ben = a.students.find(s => s.name === 'Ben Invented');
+  const p = E.retakePrompt(a, ben, { count: 4 });
+  assert.deepStrictEqual(leaks(p), [], 'a name leaked');
+  assert.ok(leaks('Ben Invented').length, 'negative control: the leak check finds a name');
+  assert.ok(p.includes('Student ' + ben.n + ' missed'));
+  assert.ok(/Write 4 new open-ended retake questions/.test(p));
+  assert.ok(/Do not write multiple-choice questions/.test(p));
+  // Ben missed questions 1, 2 and 5: exactly those, each with his answer and the right one.
+  assert.strictEqual((p.match(/^\d+\. Topic/gm) || []).length, 3);
+  [1, 2, 5].forEach(n => {
+    const q = MAP.questions[n - 1];
+    assert.ok(p.includes('question ' + n + '\n'), 'question ' + n + ' missing');
+    assert.ok(p.includes('The student chose: ' + q.options[(q.answer + 1) % 4]), 'his answer to ' + n);
+    assert.ok(p.includes('The correct answer: ' + q.options[q.answer]), 'the right answer to ' + n);
+  });
+  assert.ok(!p.includes('question 3\n'), 'a question he got right is listed');
+  assert.ok(/Write 10 new/.test(E.retakePrompt(a, ben, { count: 99 })), 'the count is capped at 10');
+  assert.ok(/Write 1 new open-ended retake question for/.test(E.retakePrompt(a, ben, { count: 1 })));
+  assert.strictEqual(E.retakePrompt(a, a.students.find(s => s.name === 'Cat Invented'), {}), '', 'nothing missed, no prompt');
+});
+
+ok('test corrections, and one prompt for the whole class', () => {
+  const { a } = run(wide());
+  const dan = a.students.find(s => s.name === 'Dan Invented');
+  const c = E.retakePrompt(a, dan, { style: 'corrections' });
+  assert.ok(/Write test corrections/.test(c) && /Do not give the correct answer away/.test(c));
+  const all = E.classPrompt(a, { count: 2 });
+  assert.deepStrictEqual(leaks(all), []);
+  const heads = all.match(/^=== Student \d+ ===$/gm) || [];
+  assert.strictEqual(heads.length, 3, 'Ann, Ben and Dan missed something; Cat did not');
+  assert.ok(!all.includes('=== Student ' + a.students.find(s => s.name === 'Cat Invented').n + ' ==='));
+});
+
+ok('no question map: a prompt still carries the question, the answer chosen and the right answer', () => {
+  const exp = E.readExport(studentAnalysis());
+  const k = E.mapFromExport(exp, 'Invented test');
+  const a = E.analyze(k.map, exp, k.matched, {});
+  const p = E.retakePrompt(a, a.students.find(s => s.name === 'Row 3'), { count: 3 });
+  assert.ok(/Invented test/.test(p));
+  assert.strictEqual((p.match(/^\d+\. Question \d+$/gm) || []).length, 3);
+  assert.ok(/The correct answer: Invented question/.test(p));
 });
 
 console.log(failed ? `\n${failed} failed` : '\nAll checks passed.');

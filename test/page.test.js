@@ -9,6 +9,14 @@
  *     two brand fonts and its logo images, all on this site, and its security policy refuses anything else (a fetch from the page is
  *     blocked, which the test proves by trying one);
  *   - the invented demo loads, matches every question and counts every student;
+ *   - the heat map has one row per student and one right-or-wrong square per question,
+ *     and its wrong squares agree with By student; the class report groups by topic,
+ *     and by learning target when asked;
+ *   - the retake prompts: one per student who missed something, no names in any,
+ *     the question count honoured, hidden on the projector, and the class prompt
+ *     reaches the clipboard;
+ *   - the Canvas file alone, in the Student Analysis shape with no name column,
+ *     gives a heat map by question;
  *   - two files chosen through the file picker, in either order and in the
  *     one-row-per-answer layout, give the same plan as the demo's other layout;
  *   - a file that is not a question map is refused with a reason, not drawn;
@@ -75,13 +83,30 @@ function fixtures(dir) {
     const miss = (s + i) % 3 === 0;
     long.push([p, String(s + 1), 'Period 2', '1', String(6 - i), q.stem, q.options[miss ? (q.answer + 1) % 4 : q.answer], miss ? '0' : '1', '1', 'Graded']);
   }));
+  // The New Quizzes Student Analysis shape (seen 2026-11-23), with no name column.
+  const block = [[]];
+  questions.forEach(q => block[0].push('Status', 'ItemID', 'ItemType', q.stem, 'EarnedPoints'));
+  block[0].push('Status', 'NumberOfCorrect', 'NumberOfIncorrect', 'NoResponse', 'PointsPossible', 'OverallScore', '', '');
+  let blockMisses = 0;
+  people.forEach((p, s) => {
+    const r = [];
+    questions.forEach((q, i) => {
+      const miss = (s + i) % 3 === 1;
+      if (miss) blockMisses += 1;
+      r.push('Graded', 'item-' + i, 'Multiple Choice', q.options[miss ? (q.answer + 2) % 4 : q.answer], miss ? '0' : '1');
+    });
+    r.push('Submitted', '', '', '', '6', '', '', '');
+    block.push(r);
+  });
+  const blockFile = path.join(dir, 'Fixture Quiz Student Analysis Report.csv');
+  fs.writeFileSync(blockFile, block.map(r => r.map(E.csvCell).join(',')).join('\n'));
   const mapFile = path.join(dir, 'Fixture-Retake-Map.json');
   const csvFile = path.join(dir, 'Fixture Student Analysis Report.csv');
   const notMap = path.join(dir, 'something-else.json');
   fs.writeFileSync(mapFile, JSON.stringify(map));
   fs.writeFileSync(csvFile, long.map(r => r.map(E.csvCell).join(',')).join('\r\n'));
   fs.writeFileSync(notMap, JSON.stringify({ hello: 'world' }));
-  return { mapFile, csvFile, notMap, people };
+  return { mapFile, csvFile, notMap, people, blockFile, blockMisses };
 }
 
 let failed = 0;
@@ -99,6 +124,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   const fx = fixtures(tmp);
   const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 900 } });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
   const page = await ctx.newPage();
   const requests = [];
   const errors = [];
@@ -124,9 +150,60 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(/Matched 8 of 8/.test(status), 'status: ' + status);
     assert(/Demo\./.test(status), 'the demo must say it is invented');
     assert(await page.locator('#s-students').innerText() === '12', 'students');
-    assert(await page.locator('#view-targets .target').count() === 4, 'one card per target');
+    assert(await page.locator('#view-targets table.report tbody tr').count() === 2, 'the report groups the demo\'s two topics');
+    assert(/Topic D\.1/.test(await page.locator('#view-targets').textContent()), 'topics named');
     assert(/Avery Demo/.test(await allResultsText()), 'names show by default');
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-targets.png'), fullPage: true });
+  });
+
+  await check('the heat map: a row per student, a right-or-wrong square per question, agreeing with By student', async () => {
+    assert(await page.locator('#view-heat').isVisible(), 'the heat map is the first view');
+    assert(await page.locator('#view-heat tbody tr').count() === 12, 'rows');
+    assert(await page.locator('#view-heat tbody td.cell').count() === 12 * 8, 'squares');
+    const wrong = await page.locator('#view-heat tbody td.cell.wrong').count();
+    const right = await page.locator('#view-heat tbody td.cell.right').count();
+    assert(wrong > 0 && right > 0 && wrong + right === 96, 'every square is right or wrong: ' + right + ' + ' + wrong);
+    // The same misses, counted from By student's "N missed".
+    const missed = await page.evaluate(() => [...document.querySelectorAll('#view-students details summary')].reduce((t, el) => t + parseInt(el.textContent, 10), 0));
+    assert(missed === wrong, 'heat map ' + wrong + ' wrong, By student ' + missed + ' missed');
+    assert(await page.locator('#view-heat thead th.grp').count() === 2, 'columns grouped by topic');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-heat.png'), fullPage: true });
+  });
+
+  await check('group by learning target, then back to topic', async () => {
+    await page.click('#by button[data-v="lt"]');
+    assert(await page.locator('#view-targets table.report tbody tr').count() === 4, 'four targets');
+    assert(await page.locator('#view-heat thead th.grp').count() === 4, 'heat map regrouped');
+    await page.click('#by button[data-v="topic"]');
+    assert(await page.locator('#view-targets table.report tbody tr').count() === 2, 'negative control: back to two topics');
+    // A bar's fill was once an inline element, which cannot take a width: every bar
+    // drew empty with every other check green.
+    await page.click('#tab-targets');
+    const widths = await page.$$eval('#view-targets .bar .fill', els => els.map(e => e.getBoundingClientRect().width));
+    assert(widths.length === 2 && widths.every(w => w > 20), 'the report bars are drawn: ' + widths.join(', '));
+    await page.click('#tab-heat');
+  });
+
+  await check('retake prompts: one per student who missed something, no names, the count honoured', async () => {
+    await page.click('#tab-prompts');
+    const retake = Number(await page.locator('#s-retake').innerText());
+    assert(await page.locator('#view-prompts .prompt').count() === retake, 'one prompt per student with something to retake');
+    const prompts = await page.locator('#view-prompts pre.prompt-text').allTextContents();
+    assert(prompts.length && prompts.every(p => !/[A-Z][a-z]+ Demo/.test(p)), 'a name is in a prompt');
+    assert(prompts.every(p => /Write 3 new open-ended/.test(p)), 'three questions by default');
+    await page.selectOption('#count', '5');
+    assert((await page.locator('#view-prompts pre.prompt-text').first().textContent()).includes('Write 5 new'), 'the count changes the prompt');
+    await page.click('#copy-class');
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    assert(/=== Student \d+ ===/.test(clip) && /Write 5 new/.test(clip), 'class prompt copied: ' + clip.slice(0, 80));
+    assert(!/[A-Z][a-z]+ Demo/.test(clip), 'a name is in the class prompt');
+    await page.click('#style button[data-v="corrections"]');
+    assert(/Write test corrections/.test(await page.locator('#view-prompts pre.prompt-text').first().textContent()), 'corrections');
+    assert(await page.locator('#count-wrap').isHidden(), 'no count for corrections');
+    await page.click('#style button[data-v="retake"]');
+    await page.selectOption('#count', '3');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-prompts.png'), fullPage: true });
+    await page.click('#tab-heat');
   });
 
   await check('By student lists every student who took it', async () => {
@@ -163,7 +240,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#download')]);
     const text = fs.readFileSync(await dl.path(), 'utf8').replace(/^﻿/, '');
     const rows = E.parseCsv(text);
-    assert(rows[0][0] === 'student' && rows[0][4] === 'learning target', 'header: ' + rows[0].join('|'));
+    assert(rows[0][0] === 'student' && rows[0][4] === 'topic', 'header: ' + rows[0].join('|'));
     const students = new Set(rows.slice(1).map(r => r[0]));
     assert(students.size === 12, 'every student appears: ' + students.size);
   });
@@ -181,8 +258,12 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await page.click('#clear');
     await page.setInputFiles('#filepick', [fx.csvFile]);
     await page.waitForFunction(() => document.getElementById('status').textContent.trim() !== '');
-    assert(/Add the question map/.test(await page.locator('#status').innerText()), 'one file waits for the other');
+    // The Canvas file alone already gives results, by question.
+    await page.waitForSelector('#results:not([hidden])');
+    assert(/scored by Canvas/.test(await page.locator('#status').innerText()), 'the Canvas file alone is read');
+    assert(await page.locator('#by-wrap').isHidden(), 'no grouping without a map');
     await page.setInputFiles('#filepick', [fx.mapFile]);
+    await page.waitForFunction(() => /Matched/.test(document.getElementById('status').textContent));
     await page.waitForSelector('#results:not([hidden])');
     const status = await page.locator('#status').innerText();
     assert(/Matched 6 of 6/.test(status), status);
@@ -190,6 +271,19 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(await page.locator('#s-students').innerText() === '3', 'students');
     const text = await allResultsText();
     fx.people.forEach(p => assert(text.includes(p), p + ' missing'));
+  });
+
+  await check('the Canvas Student Analysis shape, no name column, no map: a heat map by question', async () => {
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', [fx.blockFile]);
+    await page.waitForSelector('#results:not([hidden])');
+    const status = await page.locator('#status').innerText();
+    assert(/Read 6 questions/.test(status), status);
+    assert(/no student name column/.test(status), 'says why students are numbered');
+    assert(await page.locator('#view-heat tbody tr').count() === 3, 'three students');
+    assert(/Row 2/.test(await page.locator('#view-heat').textContent()), 'students by row');
+    assert(await page.locator('#view-heat tbody td.cell.wrong').count() === fx.blockMisses, 'every miss is a red square');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-canvas-only.png'), fullPage: true });
   });
 
   await check('the page reaches nothing but its own files, brand fonts and logo', async () => {
