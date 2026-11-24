@@ -1,6 +1,6 @@
 {
   "name": "retake-planner",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Retake Planner by ANDERSONLOGIC ai: a right-or-wrong heat map, a class report by topic, and retake prompts from a Canvas New Quizzes test.",
   "scripts": {

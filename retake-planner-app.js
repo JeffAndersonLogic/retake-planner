@@ -243,6 +243,19 @@
     return a.students.filter(s => s.took).sort((x, y) => (sort === 'score' ? (score(x) - score(y)) || byName(x, y)
       : sort === 'class' ? String(x.section).localeCompare(String(y.section), 'en', { numeric: true }) || byName(x, y) : byName(x, y)));
   }
+  // Said on every student list, so a sort that happens to leave the order as it was
+  // still shows it was applied.
+  function sortNote(a) {
+    const sort = sortUsed(a);
+    return sort === 'score' ? 'Students are sorted by score, lowest first.'
+      : sort === 'class' ? 'Students are sorted by class, then ' + (state.anon ? 'number' : 'name') + '.'
+      : 'Students are sorted by ' + (state.anon ? 'number' : 'name') + '.';
+  }
+  // Any list of student keys, in the chosen order.
+  function inOrder(a, keys) {
+    const rank = new Map(ordered(a).map((s, i) => [s.key, i]));
+    return keys.slice().sort((x, y) => (rank.has(x) ? rank.get(x) : 1e9) - (rank.has(y) ? rank.get(y) : 1e9));
+  }
   // A group's name as a person reads it: "Topic 3.1, Empires Expand", "3.1 LT2", "Q7".
   function groupName(a, key, words) {
     if (a.by === 'topic') return 'Topic ' + key + (words ? ', ' + words : '');
@@ -282,7 +295,7 @@
     const took = a.students.filter(s => s.took);
     if (!took.length) { $('view-heat').innerHTML = '<p class="empty">No student in this class has answers in the file.</p>'; return; }
     const cols = a.columns;
-    let h = '<p class="muted small intro">Each square is one student on one question: <span class="key right" aria-hidden="true">✓</span> right, <span class="key wrong" aria-hidden="true">✗</span> wrong or left blank. Columns are grouped by ' + esc(a.byLabel.toLowerCase()) + '; the bottom row is the class.</p>';
+    let h = '<p class="muted small intro">Each square is one student on one question: <span class="key right" aria-hidden="true">✓</span> right, <span class="key wrong" aria-hidden="true">✗</span> wrong or left blank. Columns are grouped by ' + esc(a.byLabel.toLowerCase()) + '; the bottom row is the class. <span class="sort-note">' + sortNote(a) + '</span></p>';
     h += '<div class="scroller heat-scroll"><table class="heat"><thead>';
     if (a.by !== 'question') {
       h += '<tr><th scope="col" class="who" rowspan="2">Student</th><th scope="col" class="score" rowspan="2">Score</th>'
@@ -355,8 +368,8 @@
           + a.byClass.map(c => { const x = c.targets.find(y => y.lt === t.lt) || {}; return '<td class="num band-' + band(x.pct) + '">' + pct(x.pct) + '</td>'; }).join('') + '</tr>').join('')
         + '</tbody></table></div>';
     }
-    h += '<h3 class="sub">Who needs each ' + esc(a.byLabel.toLowerCase()) + '</h3><div class="targets">' + rows.filter(t => t.needCount).map(t => {
-      const names = t.need.map(k => byKey.get(k)).filter(Boolean);
+    h += '<h3 class="sub">Who needs each ' + esc(a.byLabel.toLowerCase()) + '</h3><p class="muted small intro sort-note">' + sortNote(a) + '</p><div class="targets">' + rows.filter(t => t.needCount).map(t => {
+      const names = inOrder(a, t.need).map(k => byKey.get(k)).filter(Boolean);
       return '<article class="target"><div class="target-head"><span class="lt">' + esc(groupName(a, t.lt, a.by === 'question' ? '' : t.text)) + '</span><span class="muted small">' + names.length + ' to retake</span></div>'
         + '<div class="chips">' + names.map(s => '<span class="chip need">' + esc(who(s)) + '</span>').join('') + '</div></article>';
     }).join('') + '</div>';
@@ -367,7 +380,7 @@
 
   function drawStudents(a) {
     const took = ordered(a);
-    $('view-students').innerHTML = took.length ? '<div class="scroller"><table><thead><tr><th scope="col">Student</th>' + (state.anon ? '' : '<th scope="col">Class</th>') + '<th scope="col">Score</th><th scope="col">' + esc(a.byLabel) + 's to retake</th><th scope="col">Missed questions</th></tr></thead><tbody>'
+    $('view-students').innerHTML = took.length ? '<p class="muted small intro sort-note">' + sortNote(a) + '</p><div class="scroller"><table><thead><tr><th scope="col">Student</th>' + (state.anon ? '' : '<th scope="col">Class</th>') + '<th scope="col">Score</th><th scope="col">' + esc(a.byLabel) + 's to retake</th><th scope="col">Missed questions</th></tr></thead><tbody>'
       + took.map(s => {
         const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank');
         const detail = missed.length ? '<details><summary>' + missed.length + ' missed</summary><ul class="misslist">' + missed.map(r => '<li><span class="mark ' + r.status + '">Q' + esc(r.q.n) + '</span> ' + (a.keyless ? '' : esc(a.by === 'topic' && r.q.topic ? 'Topic ' + r.q.topic + ', ' + r.q.lt : r.q.lt) + ': ')
@@ -398,7 +411,7 @@
     }
     const opts = { style: state.style, count: state.count };
     const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
-    let h = '<ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
     if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
       const text = E.retakePrompt(a, s, opts);
@@ -418,7 +431,7 @@
     const byKey = new Map(a.students.map(s => [s.key, s]));
     const shared = a.groups.filter(g => g.students.length > 1);
     $('view-groups').innerHTML = '<p class="muted small intro">Students who need exactly the same ' + esc(a.byLabel.toLowerCase()) + 's can take the same retake.</p>'
-      + (shared.length ? '<div class="targets">' + shared.map(g => '<article class="target"><div class="target-head"><span class="lt">' + g.students.length + ' students</span></div><div class="chips">' + g.lts.map(lt => '<span class="chip lt">' + esc(lt) + '</span>').join('') + '</div><div class="chips">' + g.students.map(k => '<span class="chip need">' + esc(who(byKey.get(k))) + '</span>').join('') + '</div></article>').join('') + '</div>'
+      + (shared.length ? '<div class="targets">' + shared.map(g => '<article class="target"><div class="target-head"><span class="lt">' + g.students.length + ' students</span></div><div class="chips">' + g.lts.map(lt => '<span class="chip lt">' + esc(lt) + '</span>').join('') + '</div><div class="chips">' + inOrder(a, g.students).map(k => '<span class="chip need">' + esc(who(byKey.get(k))) + '</span>').join('') + '</div></article>').join('') + '</div>'
         : '<p class="empty">No two students need exactly the same set. Use the Class report to write one set of questions per ' + esc(a.byLabel.toLowerCase()) + ' and give each student the sets they need.</p>');
   }
 

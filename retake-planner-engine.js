@@ -64,7 +64,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.2.0';
+  const VERSION = 'retake-planner/1.2.1';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.

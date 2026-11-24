@@ -349,12 +349,50 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-classes.png'), fullPage: true });
   });
 
+  await check('every student list follows the sort and says how it is sorted', async () => {
+    await page.click('#clear');
+    await page.click('#demo');
+    await page.waitForSelector('#results:not([hidden])');
+    const lists = async () => ({
+      heat: await page.$$eval('#view-heat tbody tr:not(.sec) th.who', els => els.map(e => e.textContent)),
+      students: await page.$$eval('#view-students tbody tr td:first-child', els => els.map(e => e.textContent)),
+      prompts: await page.$$eval('#view-prompts .prompt .lt', els => els.map(e => e.textContent.replace(/^Student \d+ · /, ''))),
+      chips: await page.$$eval('#view-targets .targets .target .chip.need', els => els.map(e => e.textContent)),
+      groups: await page.$$eval('#view-groups .chip.need', els => els.map(e => e.textContent))
+    });
+    // A list follows the heat map's order when its names appear in that order (each card on its own).
+    const follows = (part, whole) => part.join() === whole.filter(n => part.includes(n)).join();
+    const byScore = await (async () => { await page.click('#sort button[data-v="score"]'); return lists(); })();
+    const byName = await (async () => { await page.click('#sort button[data-v="name"]'); return lists(); })();
+    assert(byScore.heat.join() !== byName.heat.join(), 'negative control: score and name orders differ on the demo');
+    for (const [label, l] of [['score', byScore], ['name', byName]]) {
+      assert(l.students.join() === l.heat.join(), label + ': By student ignores the sort');
+      assert(follows(l.prompts, l.heat), label + ': the prompts ignore the sort');
+      const cards = await page.$$eval('#view-targets .targets .target', els => els.length);
+      assert(cards > 0, 'the class report lists who needs each topic');
+    }
+    assert(byScore.chips.join() !== byName.chips.join(), 'the class report\'s names do not move with the sort');
+    assert(/sorted by name/.test(await page.locator('#view-students .sort-note').textContent()), 'the sort is said');
+    await page.click('#sort button[data-v="score"]');
+    assert(/sorted by score, lowest first/.test(await page.locator('#view-heat .sort-note').textContent()), 'the sort is said');
+    await page.click('#sort button[data-v="class"]');
+  });
+
+  await check('the page asks for this version\'s own script and styles, so a browser cannot keep last version\'s', async () => {
+    const version = require(path.join(ROOT, 'package.json')).version;
+    const asked = requests.map(u => u.replace(origin, '')).filter(u => /retake-planner[-.a-z]*\.(js|css)/.test(u));
+    ['/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js'].forEach(f => {
+      assert(asked.includes(f + '?v=' + version), f + ' was not asked for as version ' + version + ': ' + asked.join(', '));
+    });
+    assert(await page.evaluate(() => window.BHRetakePlanner.VERSION) === 'retake-planner/' + version, 'the engine says a different version');
+  });
+
   await check('the page reaches nothing but its own files, brand fonts and logo', async () => {
     const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js',
       '/assets/fonts/andersonlogic/manrope-latin-var.woff2', '/assets/fonts/andersonlogic/inter-latin-var.woff2',
       '/assets/images/brand/andersonlogic/al-logo-mark.png', '/assets/images/brand/andersonlogic/al-logo-wordmark.png',
       '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png']);
-    const stray = requests.filter(u => !u.startsWith('data:') && !u.startsWith('blob:') && !own.has(u.replace(origin, '')));
+    const stray = requests.filter(u => !u.startsWith('data:') && !u.startsWith('blob:') && !own.has(u.replace(origin, '').replace(/\?v=[\d.]+$/, '')));
     assert(!stray.length, 'unexpected requests: ' + stray.join(', '));
     // Negative control: a fetch from the page is refused by its policy and recorded.
     const outcome = await page.evaluate(() => fetch('https://example.com/x').then(() => 'sent', () => 'blocked'));

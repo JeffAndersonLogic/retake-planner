@@ -11,7 +11,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <title>Retake Planner | ANDERSONLOGIC ai</title>
-<link rel="stylesheet" href="retake-planner.css">
+<link rel="stylesheet" href="retake-planner.css?v=1.2.1">
 <link rel="icon" type="image/png" href="assets/images/brand/andersonlogic/al-favicon.png">
 </head>
 <body>
@@ -116,7 +116,9 @@
   </div>
 </main>
 <footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself.</div></footer>
-<script src="retake-planner-engine.js"></script>
-<script src="retake-planner-app.js"></script>
+<!-- ?v= is the version (package.json): a browser that kept the last version's script for its ten
+     minutes would otherwise run old code under new buttons (2026-11-24). test/page.test.js checks it. -->
+<script src="retake-planner-engine.js?v=1.2.1"></script>
+<script src="retake-planner-app.js?v=1.2.1"></script>
 </body>
 </html>
