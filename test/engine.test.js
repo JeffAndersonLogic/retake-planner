@@ -462,5 +462,78 @@ ok('files from different tests are flagged, and an unreadable file is named', ()
   assert.deepStrictEqual(exp.files.map(f => f.ok), [true, true, false]);
 });
 
+/* ── 2026-11-24: the full Student Analysis export ──────────────────────── */
+
+// The header of a full export, as Jeff pasted it: student columns with Canvas's
+// run-together names, then "ItemID, ItemType, wording, EarnedPoints, Status" per
+// question (Status after), then the summary. Points: Canvas gives 1 each; the
+// invented map counts 2.
+function fullExport(opts) {
+  const o = opts || {};
+  const head = ['Name', 'ID', 'SISID', 'SectionIDs', 'SectionNames', 'SectionSISIDs', 'Submitted', 'ElapsedTime', 'Attempt'];
+  ORDER.forEach(i => head.push('ItemID', 'ItemType', MAP.questions[i].stem, 'EarnedPoints', 'Status'));
+  head.push('NumberOfCorrect', 'NumberOfIncorrect', 'NoResponse', 'PointsPossible', 'OverallScore');
+  const rows = [head];
+  NAMES.forEach((name, s) => {
+    const r = [name, String(s + 1), 'S' + s, '77', s < 2 ? 'Period 2' : 'Period 5', 'P', '2026-11-20', '612', '1'];
+    ORDER.forEach(i => {
+      const q = MAP.questions[i];
+      const c = choiceFor(q, s);
+      r.push('item-' + i, 'MultipleChoice', q.options[c], c === q.answer ? '1' : '0', c === q.answer ? 'Correct' : 'Incorrect');
+    });
+    r.push('', '', '', '6', '');
+    rows.push(r);
+  });
+  if (o.mutate) o.mutate(rows);
+  return rows.map(r => r.map(E.csvCell).join(o.tab ? '\t' : ',')).join('\r\n');
+}
+
+ok('a full Student Analysis export: names, sections from SectionNames, no stray columns', () => {
+  const { exp, matched, a } = run(fullExport({ tab: true }));
+  assert.strictEqual(exp.items.length, 6, 'SISID, SectionIDs, ElapsedTime, PointsPossible and the rest are not questions: ' + exp.items.map(i => i.label).join(' | '));
+  assert.strictEqual(matched.unmatchedItems.length, 0);
+  assert.deepStrictEqual([...new Set(exp.students.map(s => s.section))], ['Period 2', 'Period 5']);
+  assert.deepStrictEqual(a.sections, ['Period 2', 'Period 5']);
+  assert.strictEqual(a.students.find(s => s.name === 'Ben Invented').section, 'Period 2');
+});
+
+ok('scores are in Canvas\'s points, not the key\'s', () => {
+  const { a } = run(fullExport());
+  // Canvas: 1 point each, six questions. The invented map says 2 each.
+  assert.deepStrictEqual(a.students.map(s => s.earned + '/' + s.possible), ['5/6', '3/6', '6/6', '3/6']);
+  assert.strictEqual(a.possible, 6);
+  assert.deepStrictEqual(run(wide()).a.students.map(s => s.earned + '/' + s.possible), ['10/12', '6/12', '12/12', '6/12'], 'negative control: a file that says 2 points each still reads 2');
+});
+
+ok('a Status after EarnedPoints belongs to the question before it', () => {
+  // Cat never saw the question in Canvas's second block: that one is left out, and the
+  // question after it still counts.
+  const cols = 9 + 1 * 5; // start of the second block
+  const { exp, a } = run(fullExport({ mutate: rows => { rows[3][cols + 2] = ''; rows[3][cols + 3] = ''; rows[3][cols + 4] = 'Not Attempted'; } }));
+  const second = exp.items[1].label, third = exp.items[2];
+  const cat = a.students.find(s => s.name === 'Cat Invented');
+  const inSecond = cat.results.find(r => norm(r.q.stem) === E.norm(second) && r.status === 'absent');
+  assert.ok(inSecond, 'the unseen question is left out');
+  assert.strictEqual(cat.possible, 5, 'five questions counted');
+  assert.strictEqual(third.responses[Object.keys(third.responses)[2]].status, 'graded', 'the next question keeps its own status');
+});
+function norm(x) { return E.norm(x); }
+
+ok('accents and quotes scrambled by Excel are repaired; untouched text is left alone', () => {
+  const cp = { 0x80: 0x20AC, 0x93: 0x201C, 0x94: 0x201D, 0x9C: 0x153, 0x99: 0x2122 };
+  const scramble = t => [...Buffer.from(t, 'utf8')].map(b => String.fromCodePoint(cp[b] || b)).join('');
+  const good = 'name,id,Q\nAna Potosí,1,“in search of spices” é\n';
+  const fixed = E.readExport(scramble(good));
+  assert.strictEqual(fixed.students[0].name, 'Ana Potosí');
+  assert.strictEqual(fixed.items[0].responses['1'].response, '“in search of spices” é');
+  assert.ok(fixed.notes.some(n => /scrambled/.test(n)));
+  const dropped = E.readExport(scramble(good).replace(/\u009d/g, ''));
+  assert.strictEqual(dropped.students[0].name, 'Ana Potosí', 'a dropped byte still repairs the rest');
+  const clean = E.readExport(good);
+  assert.ok(!clean.notes.some(n => /scrambled/.test(n)), 'negative control: clean text is not touched');
+  const mixed = 'name,id,Q\nLi 李,1,MÃ©xico\n';
+  assert.strictEqual(E.readExport(mixed).students[0].name, 'Li 李', 'text Windows-1252 cannot hold is never re-read');
+});
+
 console.log(failed ? `\n${failed} failed` : '\nAll checks passed.');
 process.exit(failed ? 1 : 0);

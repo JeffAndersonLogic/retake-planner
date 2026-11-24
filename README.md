@@ -108,11 +108,19 @@ lists any it could not place.
 
 ## What it handles, and what it does not yet
 
-- Canvas **New Quizzes** Student Analysis exports. Three shapes are read: the one seen on a real
-  export on 2026-11-23 (five columns per question: Status, ItemID, ItemType, the question's
-  wording holding the student's answer, and EarnedPoints), one row per student with a score
-  column after each question, and one row per answer. When the file has no name column, students
-  are shown by their row in the file.
+- Canvas **New Quizzes** Student Analysis exports, checked against a real export's header on
+  2026-11-24: student columns (Name, ID, SISID, SectionNames and others, with Canvas's words run
+  together), then five columns per question (ItemID, ItemType, the question's wording holding the
+  student's answer, EarnedPoints, Status), then a summary. Two older shapes are also read: one row
+  per student with a score column after each question, and one row per answer. When the file has
+  no name column, students are shown by their row in the file.
+- **Sections:** the SectionNames column makes each section a class.
+- **Scores are in Canvas's points**, so a student reads 41 of 50 as Canvas shows it, even when the
+  question map counts questions differently.
+- **A file opened and saved in Excel** often comes back with its accents and curly quotes
+  scrambled ("â€œ" for a quote). The reader repairs that and says so.
+- **Question titles do not come through.** Canvas puts each question's wording in the file, not its
+  title, so a title such as "Question 1 (Topic 3.1)" cannot give the topic; the question map does.
 - **Single-answer multiple choice.** Questions with no points in the file are left out.
 - When Canvas and the key disagree (a regraded question), Canvas's score wins and the count is
   shown. A blank answer counts as missed; a question a student never saw is left out.

@@ -195,21 +195,25 @@
   const ROLE = {
     name: ['name', 'student', 'student name', 'full name', 'user name', 'display name', 'sortable name'],
     id: ['id', 'student id', 'user id', 'canvas user id', 'canvas id', 'student canvas id', 'participant id'],
-    sis: ['sis id', 'sis user id', 'student sis id', 'sis login id', 'login id'],
-    section: ['section', 'section name', 'sections', 'student section'],
+    sis: ['sis id', 'sisid', 'sis user id', 'student sis id', 'sis login id', 'login id'],
+    // "SectionNames", as Canvas writes it in a Student Analysis export (seen 2026-11-24).
+    section: ['section', 'section name', 'section names', 'sections', 'student section'],
     attempt: ['attempt', 'attempt number', 'attempt no', 'attempt id'],
     meta: ['section id', 'section sis id', 'submitted', 'submitted at', 'submission date', 'n correct', 'n incorrect', 'score',
       'total score', 'attempt score', 'final score', 'quiz score', 'points', 'total points', 'kept score', 'percentage', 'percent',
       'time', 'time spent', 'duration', 'started', 'started at', 'finished', 'finished at', 'email', 'course', 'course id',
       'quiz id', 'quiz title', 'assignment id', 'user', 'graded', 'graded at',
+      'section ids', 'section sis ids', 'section sisids', 'elapsed time', 'points possible',
       // The summary at the end of a New Quizzes Student Analysis row (seen 2026-11-23).
       'numberofcorrect', 'numberofincorrect', 'noresponse', 'pointspossible', 'overallscore',
       'number of correct', 'number of incorrect', 'no response', 'overall score']
   };
-  // New Quizzes Student Analysis, as exported on 2026-11-23: every question is five
-  // columns, "Status, ItemID, ItemType, <the question's wording>, EarnedPoints", and the
-  // wording column holds the answer the student chose. The three before the wording
-  // belong to the question after them; EarnedPoints belongs to the one before it.
+  // New Quizzes Student Analysis: every question is five columns. A full export
+  // (2026-11-24) runs "ItemID, ItemType, <the question's wording>, EarnedPoints, Status";
+  // a header pasted with its first columns cut off (2026-11-23) began with a Status.
+  // The wording column holds the answer the student chose. ItemID and ItemType belong
+  // to the question after them; EarnedPoints, and a Status right after it, to the one
+  // before.
   const BLOCK_BEFORE = { status: 'status', itemid: 'itemId', 'item id': 'itemId', itemtype: 'type', 'item type': 'type' };
   const BLOCK_AFTER = ['earnedpoints', 'earned points'];
   // Long layout: one row per student per question.
@@ -249,16 +253,60 @@
     return 'graded';
   }
 
+  // A file opened in Excel and saved again can come back with its accents and curly
+  // quotes turned into pairs of odd letters ("â€œ" for a quote, "Ã­" for í): its
+  // UTF-8 bytes were read as Windows-1252. Seen in a real export on 2026-11-24. When
+  // every odd character maps back to a byte and the bytes read as UTF-8, the text is
+  // repaired; otherwise it is left exactly as it was.
+  const CP1252 = { 0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88,
+    0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94,
+    0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F };
+  function repairMojibake(text) {
+    const s = String(text == null ? '' : text);
+    if (!/[ÃÂâ][\u0080-\u00BF\u0152\u0153\u0160\u0161\u0178\u017D\u017E\u0192\u02C6\u02DC\u2013-\u2122\u20AC]/.test(s) || typeof TextDecoder === 'undefined') return s;
+    const bytes = [];
+    for (const ch of s) {
+      const c = ch.codePointAt(0);
+      if (c < 0x100) bytes.push(c);
+      else if (CP1252[c] != null) bytes.push(CP1252[c]);
+      else return s; // a character Windows-1252 cannot hold: this text was not misread
+    }
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(bytes)); }
+    catch (e) {
+      // Excel sometimes drops a byte it has no letter for (the end of a closing quote),
+      // leaving a broken pair. The rest is still repaired; the broken pair is dropped.
+      const loose = new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+      const broken = (loose.match(/\uFFFD/g) || []).length;
+      return broken * 20 < bytes.length ? loose.replace(/\uFFFD/g, '') : s;
+    }
+  }
+  // Canvas runs a column's words together ("SectionNames", "SectionIDs", "SISID",
+  // "PointsPossible"). Every column name this reader knows is also known with its
+  // spaces taken out, so "SectionIDs" is read as "section ids". A question's wording
+  // is never one of them, so it is left as it is.
+  let COMPACT = null;
+  function headNorm(h) {
+    if (!COMPACT) {
+      COMPACT = new Map();
+      [].concat(...Object.values(ROLE), ...Object.values(LONG), Object.keys(BLOCK_BEFORE), BLOCK_AFTER)
+        .forEach(n => { if (!COMPACT.has(n.replace(/ /g, ''))) COMPACT.set(n.replace(/ /g, ''), n); });
+    }
+    const n = norm(h);
+    return COMPACT.get(n.replace(/ /g, '')) || n;
+  }
+
   function readExport(text) {
-    const rows = parseCsv(text);
+    const repaired = repairMojibake(text);
+    const rows = parseCsv(repaired);
     const notes = [];
     if (rows.length < 2) return { layout: 'empty', students: [], items: [], notes: ['The Canvas file has no student rows.'] };
     const header = rows[0].map(h => String(h));
-    const heads = header.map(norm);
+    const heads = header.map(headNorm);
     const col = {
       name: findCol(heads, ROLE.name), id: findCol(heads, ROLE.id), sis: findCol(heads, ROLE.sis),
       section: findCol(heads, ROLE.section), attempt: findCol(heads, ROLE.attempt)
     };
+    if (repaired !== String(text)) notes.push('Accents and quotation marks in the file had been scrambled (it was probably opened and saved in Excel), and were repaired.');
     const respCol = findCol(heads, LONG.response);
     const itemCol = findCol(heads, LONG.item);
     const isBlock = heads.some(h => BLOCK_AFTER.includes(h));
@@ -351,6 +399,9 @@
       heads.forEach((h, i) => {
         if (known.has(i) || h === '') return;
         if (BLOCK_AFTER.includes(h)) { if (lastGroup && lastGroup.score < 0) lastGroup.score = i; return; }
+        // A full export (2026-11-24) runs "ItemID, ItemType, wording, EarnedPoints,
+        // Status": a Status straight after a question's EarnedPoints is that question's.
+        if (h === 'status' && lastGroup && i > 0 && BLOCK_AFTER.includes(heads[i - 1])) { lastGroup.status = i; return; }
         if (BLOCK_BEFORE[h]) { pending[BLOCK_BEFORE[h]] = i; return; }
         const g = { key: 'column ' + (i + 1), label: plain(header[i]), response: i, score: -1, possible: -1,
           status: pending.status != null ? pending.status : -1, type: pending.type != null ? pending.type : -1, first: i };
@@ -664,6 +715,12 @@
     // "3.1 LT2" before "3.1 LT10" before "3.2 LT1": course order, not quiz order.
     ltOrder.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 
+    // What each question is worth, in Canvas's points when the file says, so a score
+    // reads as Canvas shows it (41 of 50, not 82 of 100 from a key that counts 2 each).
+    // A question nobody got right says nothing; it takes the usual worth of the others.
+    const known = pairs.map(p => { const r = Object.values(p.item.responses).find(x => x.possible != null && x.possible > 0); return r ? r.possible : null; });
+    const usual = known.filter(x => x != null).sort((x, y) => x - y)[Math.floor(known.filter(x => x != null).length / 2)];
+    const worth = pairs.map((p, i) => (known[i] != null ? known[i] : (usual != null ? usual : p.q.points)));
     // Every student in the file is read first, whatever class is chosen, so that a
     // student's number is the same in every class view, every sort and every copy.
     const everyone = exp.students.map(s => {
@@ -673,11 +730,11 @@
         const j = judge(p, p.item.responses[s.key]);
         if (j.disagree) disagree += 1;
         if (j.status === 'unknown') unknown += 1;
-        return Object.assign({ q: p.q }, j);
+        return Object.assign({ q: p.q, worth: worth[pairs.indexOf(p)] }, j);
       });
       const counted = results.filter(r => r.status !== 'absent' && r.status !== 'unknown');
-      const earned = counted.filter(r => r.status === 'correct').reduce((t, r) => t + r.q.points, 0);
-      const possible = counted.reduce((t, r) => t + r.q.points, 0);
+      const earned = counted.filter(r => r.status === 'correct').reduce((t, r) => t + r.worth, 0);
+      const possible = counted.reduce((t, r) => t + r.worth, 0);
       const byLt = new Map();
       counted.forEach(r => {
         const g = gk(r.q);
@@ -721,7 +778,7 @@
         cols: pairs.map((p, i) => i).filter(i => gk(pairs[i].q) === g) })).filter(c => c.cols.length),
       students, took: took.length, questions: main.questions, targets: main.targets, groups: main.groups, average: main.average,
       sections: sectionNames, byClass, notes,
-      possible: pairs.reduce((t, p) => t + p.q.points, 0)
+      possible: worth.reduce((t, w) => t + w, 0)
     };
   }
 
