@@ -43,7 +43,7 @@
       <p class="muted">Your files stay on this computer. The page reads them here, sends them nowhere, and forgets them when you close the tab.</p>
       <div class="drop" id="drop">
         <div class="files">
-          <div class="file" id="f-export"><b>1. The Canvas results</b><span class="state" id="f-export-state">Not loaded. A .csv file from the quiz's Student Analysis report.</span></div>
+          <div class="file" id="f-export"><b>1. The Canvas results</b><span class="state" id="f-export-state">Not loaded. A .csv file from the quiz's Student Analysis report. One file per class period works too.</span><ul class="class-files" id="class-files" hidden></ul></div>
           <div class="file" id="f-map"><b>2. The question map (optional)</b><span class="state" id="f-map-state">Not loaded. Adds topics, learning targets and correct answers. Without it you still see right and wrong on every question.</span></div>
         </div>
         <div class="row">
@@ -60,6 +60,7 @@
           <li>In Canvas, open the quiz (New Quizzes) and choose <b>Reports</b>.</li>
           <li>Choose <b>Student Analysis</b>, generate the report, and choose <b>Export CSV</b>.</li>
           <li>Drop the downloaded file here. You do not need to open or change it first.</li>
+          <li>Several class periods in separate Canvas courses? Download the report in each course and drop all the files in together, then name each one (for example, Period 3).</li>
         </ol>
       </details>
       <details class="help">
@@ -81,6 +82,7 @@
         <div id="section-wrap" hidden><label class="ctl-label" for="section">Class</label><select class="sel" id="section"></select></div>
         <div id="by-wrap" hidden><span class="ctl-label" id="by-label">Group by</span><span class="seg" id="by" role="group" aria-labelledby="by-label"><button type="button" aria-pressed="true" data-v="topic">Topic</button><button type="button" aria-pressed="false" data-v="lt">Learning target</button><button type="button" aria-pressed="false" data-v="question">Question</button></span></div>
         <div><span class="ctl-label" id="rule-label">Retake when the student</span><span class="seg" id="rule" role="group" aria-labelledby="rule-label"><button type="button" aria-pressed="true" data-v="any">missed any of its questions</button><button type="button" aria-pressed="false" data-v="most">missed most of them</button></span></div>
+        <div><span class="ctl-label" id="sort-label">Sort students by</span><span class="seg" id="sort" role="group" aria-labelledby="sort-label"><button type="button" aria-pressed="true" data-v="class">Class</button><button type="button" aria-pressed="false" data-v="name">Name</button><button type="button" aria-pressed="false" data-v="score">Score</button></span></div>
         <div><span class="ctl-label" id="names-label">Names</span><span class="seg" id="names" role="group" aria-labelledby="names-label"><button type="button" aria-pressed="true" data-v="show">Show</button><button type="button" aria-pressed="false" data-v="anon">Projector safe</button></span></div>
         <div class="right">
           <button class="btn" type="button" id="print">Print this view</button>

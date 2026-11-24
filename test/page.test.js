@@ -17,6 +17,9 @@
  *     reaches the clipboard;
  *   - the Canvas file alone, in the Student Analysis shape with no name column,
  *     gives a heat map by question;
+ *   - class periods: one file per period, each named by the teacher, combine into one
+ *     plan; choosing a class narrows every view; students sort by class, name or
+ *     score; the report compares classes; renaming or removing a file updates it;
  *   - two files chosen through the file picker, in either order and in the
  *     one-row-per-answer layout, give the same plan as the demo's other layout;
  *   - a file that is not a question map is refused with a reason, not drawn;
@@ -100,13 +103,26 @@ function fixtures(dir) {
   });
   const blockFile = path.join(dir, 'Fixture Quiz Student Analysis Report.csv');
   fs.writeFileSync(blockFile, block.map(r => r.map(E.csvCell).join(',')).join('\n'));
+  // Two class periods, one file each, in the long layout with named students.
+  const periodFile = (who, name) => {
+    const rows = [['Student Name', 'Student ID', 'Attempt', 'Item Position', 'Question Text', 'Answer', 'Points Received', 'Points Possible', 'Status']];
+    who.forEach((p, s) => questions.forEach((q, i) => {
+      const miss = (s * 2 + i) % 4 === 0;
+      rows.push([p, name + s, '1', String(i + 1), q.stem, q.options[miss ? (q.answer + 1) % 4 : q.answer], miss ? '0' : '1', '1', 'Graded']);
+    }));
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, rows.map(r => r.map(E.csvCell).join(',')).join('\n'));
+    return f;
+  };
+  const periodA = periodFile(['Ada Fixture', 'Bo Fixture', 'Cy Fixture'], 'Period 2 Student Analysis Report.csv');
+  const periodB = periodFile(['Di Fixture', 'Ed Fixture', 'Flo Fixture'], 'Per 5 Student Analysis Report.csv');
   const mapFile = path.join(dir, 'Fixture-Retake-Map.json');
   const csvFile = path.join(dir, 'Fixture Student Analysis Report.csv');
   const notMap = path.join(dir, 'something-else.json');
   fs.writeFileSync(mapFile, JSON.stringify(map));
   fs.writeFileSync(csvFile, long.map(r => r.map(E.csvCell).join(',')).join('\r\n'));
   fs.writeFileSync(notMap, JSON.stringify({ hello: 'world' }));
-  return { mapFile, csvFile, notMap, people, blockFile, blockMisses };
+  return { mapFile, csvFile, notMap, people, blockFile, blockMisses, periodA, periodB };
 }
 
 let failed = 0;
@@ -158,7 +174,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
   await check('the heat map: a row per student, a right-or-wrong square per question, agreeing with By student', async () => {
     assert(await page.locator('#view-heat').isVisible(), 'the heat map is the first view');
-    assert(await page.locator('#view-heat tbody tr').count() === 12, 'rows');
+    assert(await page.locator('#view-heat tbody tr:not(.sec)').count() === 12, 'rows');
+    assert(await page.locator('#view-heat tbody tr.sec').count() === 2, 'one heading per class (Green, Silver)');
     assert(await page.locator('#view-heat tbody td.cell').count() === 12 * 8, 'squares');
     const wrong = await page.locator('#view-heat tbody td.cell.wrong').count();
     const right = await page.locator('#view-heat tbody td.cell.right').count();
@@ -286,6 +303,52 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-canvas-only.png'), fullPage: true });
   });
 
+  await check('class periods: one file each, named, compared, filtered and sorted', async () => {
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', [fx.periodA, fx.periodB, fx.mapFile]);
+    await page.waitForFunction(() => /Combined/.test(document.getElementById('status').textContent));
+    const names = await page.$$eval('#class-files input.class-name', els => els.map(e => e.value));
+    assert(names.join('|') === 'Period 2|Period 5', 'class names guessed from the file names: ' + names.join('|'));
+    assert(/Matched 6 of 6/.test(await page.locator('#status').innerText()), 'both files read against the map');
+    assert(await page.locator('#s-students').innerText() === '6', 'students from both files');
+    assert(await page.locator('#view-heat tbody tr.sec').count() === 2, 'a heading per period');
+    // Rename a class: the dropdown, the headings and the comparison follow.
+    await page.fill('#class-name-1', 'Period 6');
+    await page.press('#class-name-1', 'Enter');
+    await page.waitForFunction(() => /Period 6/.test(document.getElementById('section').textContent));
+    await page.click('#tab-targets');
+    const heads = await page.$$eval('#view-targets table.compare thead th', els => els.map(e => e.textContent));
+    assert(heads.join('|') === 'Learning target|All classes|Period 2|Period 6', 'compare columns: ' + heads.join('|'));
+    // One class only: every view narrows, and student numbers do not change.
+    await page.click('#tab-heat');
+    const before = await page.$$eval('#view-heat tbody tr:not(.sec) th.who', els => els.map(e => e.textContent));
+    await page.click('#names button[data-v="anon"]');
+    const numbersAll = await page.$$eval('#view-heat tbody tr:not(.sec) th.who', els => els.map(e => e.textContent));
+    await page.selectOption('#section', 'Period 6');
+    const numbersOne = await page.$$eval('#view-heat tbody tr:not(.sec) th.who', els => els.map(e => e.textContent));
+    assert(numbersOne.length === 3 && numbersOne.every(n => numbersAll.includes(n)), 'numbers kept: ' + numbersOne.join(',') + ' of ' + numbersAll.join(','));
+    assert(numbersAll.length === 6, 'negative control: all classes shows everyone');
+    assert(await page.locator('#view-heat tbody tr.sec').count() === 0, 'no class headings inside one class');
+    assert(await page.locator('#view-targets table.compare').count() === 0, 'no comparison inside one class');
+    await page.click('#names button[data-v="show"]');
+    await page.selectOption('#section', '');
+    // Sort by score: lowest first.
+    await page.click('#sort button[data-v="score"]');
+    const scores = await page.$$eval('#view-heat tbody tr:not(.sec) td.score', els => els.map(e => parseInt(e.textContent, 10)));
+    assert(scores.every((x, i) => i === 0 || scores[i - 1] <= x), 'not lowest first: ' + scores.join(','));
+    assert(await page.locator('#view-heat tbody tr.sec').count() === 0, 'no class headings when sorted by score');
+    await page.click('#sort button[data-v="name"]');
+    const named = await page.$$eval('#view-heat tbody tr:not(.sec) th.who', els => els.map(e => e.textContent));
+    assert(named.join() === named.slice().sort((x, y) => x.localeCompare(y, 'en', { numeric: true })).join(), 'by name: ' + named.join(','));
+    assert(named.join() !== before.join() || before.join() === named.slice().sort().join(), 'sorting changed nothing it should have');
+    await page.click('#sort button[data-v="class"]');
+    // Remove a file: back to one class.
+    await page.click('#class-files button.remove >> nth=1');
+    await page.waitForFunction(() => document.getElementById('s-students').textContent === '3');
+    assert(await page.locator('#class-files').isHidden(), 'one file needs no class names');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-classes.png'), fullPage: true });
+  });
+
   await check('the page reaches nothing but its own files, brand fonts and logo', async () => {
     const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js',
       '/assets/fonts/andersonlogic/manrope-latin-var.woff2', '/assets/fonts/andersonlogic/inter-latin-var.woff2',
@@ -296,8 +359,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     // Negative control: a fetch from the page is refused by its policy and recorded.
     const outcome = await page.evaluate(() => fetch('https://example.com/x').then(() => 'sent', () => 'blocked'));
     assert(outcome === 'blocked', 'a fetch was allowed');
-    const csp = await page.evaluate(() => window.__csp.slice());
-    assert(csp.some(v => /connect-src/.test(v)), 'the blocked fetch should be recorded as a violation');
+    // The browser reports the violation a moment after refusing the fetch; wait for it,
+    // or it lands in the next check instead.
+    const seen = await page.waitForFunction(() => window.__csp.some(v => /connect-src/.test(v)), null, { timeout: 5000 }).then(() => true, () => false);
+    assert(seen, 'the blocked fetch should be recorded as a violation');
     await page.evaluate(() => { window.__csp.length = 0; });
   });
 

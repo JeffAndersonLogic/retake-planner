@@ -409,5 +409,58 @@ ok('no question map: a prompt still carries the question, the answer chosen and 
   assert.ok(/The correct answer: Invented question/.test(p));
 });
 
+/* ── 2026-11-24: class periods ────────────────────────────────────────── */
+
+ok('a student keeps the same number whichever class is chosen', () => {
+  const all = run(wide()).a;
+  const silver = run(wide(), { section: 'Silver' }).a;
+  silver.students.forEach(s => assert.strictEqual(s.n, all.students.find(x => x.key === s.key).n, s.name));
+  assert.deepStrictEqual(silver.students.map(s => s.n), [3, 4], 'Cat and Dan are 3 and 4 in every view');
+});
+
+ok('class by class: each class\'s percent per target, only with no class chosen', () => {
+  const { a } = run(wide());
+  assert.deepStrictEqual(a.sections, ['Green', 'Silver']);
+  assert.deepStrictEqual(a.byClass.map(c => c.section + ':' + c.took), ['Green:2', 'Silver:2']);
+  // Z.1 LT1 (questions 1 and 2): Green missed 3 of 4 (Ann 1; Ben 1, 2); Silver missed none.
+  const pctOf = (sec, lt) => a.byClass.find(c => c.section === sec).targets.find(t => t.lt === lt).pct;
+  assert.strictEqual(pctOf('Green', 'Z.1 LT1'), 0.25);
+  assert.strictEqual(pctOf('Silver', 'Z.1 LT1'), 1);
+  assert.strictEqual(run(wide(), { section: 'Green' }).a.byClass.length, 0, 'negative control: one class has nothing to compare');
+  const csv = E.parseCsv(E.reportCsv(a));
+  assert.deepStrictEqual(csv[0].slice(-2), ['Green percent correct', 'Silver percent correct']);
+});
+
+ok('one file per class period combines into one plan, each file a class', () => {
+  const a2 = studentAnalysis();
+  const a5 = studentAnalysis({ mutate: rows => { rows.push(rows[1].slice()); } }); // a fifth student, a copy of row 2
+  const exp = E.combineExports([{ text: a2, label: 'Period 2' }, { text: a5, label: 'Period 5' }]);
+  assert.strictEqual(exp.students.length, 9);
+  assert.strictEqual(exp.items.length, 6, 'the same six questions, lined up across files');
+  assert.deepStrictEqual([...new Set(exp.students.map(s => s.section))], ['Period 2', 'Period 5']);
+  assert.ok(exp.students.some(s => s.name === 'Period 5, Row 2'), 'unnamed rows say which class they are in');
+  assert.strictEqual(new Set(exp.students.map(s => s.key)).size, 9, 'Row 2 in two files is two students');
+  const matched = E.match(MAP, exp);
+  assert.strictEqual(matched.pairs.length, 6);
+  const a = E.analyze(MAP, exp, matched, {});
+  assert.strictEqual(a.took, 9);
+  assert.strictEqual(a.byClass.length, 2);
+  // Per class, the same results the file gives on its own.
+  const alone = run(a2).a;
+  const p2 = E.analyze(MAP, exp, matched, { section: 'Period 2' });
+  assert.deepStrictEqual(p2.students.map(s => s.earned), alone.students.map(s => s.earned));
+  assert.ok(!exp.notes.some(n => /only some of the files/.test(n)));
+});
+
+ok('files from different tests are flagged, and an unreadable file is named', () => {
+  const other = inventedMap();
+  other.questions.forEach(q => { q.stem = 'A different test, question ' + q.n; });
+  const otherCsv = studentAnalysis().replace(/The source best illustrates which development\?/g, 'A different test entirely?');
+  const exp = E.combineExports([{ text: studentAnalysis(), label: 'Period 2' }, { text: otherCsv, label: 'Period 3' }, { text: 'colour,size\nred,2', label: 'Period 4' }]);
+  assert.ok(exp.notes.some(n => /only some of the files/.test(n)), exp.notes.join(' / '));
+  assert.ok(exp.notes.some(n => /^Period 4: No student column/.test(n)), exp.notes.join(' / '));
+  assert.deepStrictEqual(exp.files.map(f => f.ok), [true, true, false]);
+});
+
 console.log(failed ? `\n${failed} failed` : '\nAll checks passed.');
 process.exit(failed ? 1 : 0);

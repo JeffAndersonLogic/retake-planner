@@ -29,6 +29,20 @@ It reads results. It does not grade. Canvas holds every grade.
      read and edit them before a student sees them.
    - **Same retake:** students who missed exactly the same topics.
 4. **Group by** topic (the default), learning target, or question.
+5. **Sort students by** class, name, or score (lowest first). The same order is used on every view.
+
+### Class periods
+
+- **All your periods in one Canvas course:** if Canvas's file has a section column, each section is
+  a class automatically.
+- **Each period in its own Canvas course:** download the Student Analysis file in each course and
+  drop them all in together. Each file becomes a class; name it (for example, Period 3) in the box
+  beside the file name. A file whose name includes "Period 3" is named for you.
+- **Class** at the top shows one class on every view; **All classes** shows everyone, with a heading
+  per class on the heat map and a **Compare classes** table in the class report. The report's
+  download adds a column per class.
+- A student's number ("Student 7") stays the same whichever class is shown or however students are
+  sorted, so a retake prompt always matches the right student.
 
 **Projector safe** replaces names with numbers and hides every question, answer and prompt, so
 a projected screen gives nothing away before a retake.

@@ -17,8 +17,8 @@
   const pct = x => (x == null ? 'n/a' : Math.round(x * 100) + '%');
 
   const state = {
-    exportText: null, exportName: '', mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
-    by: 'topic', style: 'retake', count: 3
+    exports: [], mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
+    by: 'topic', style: 'retake', count: 3, sort: 'class'
   };
   let model = null; // { map, exp, matched, analysis }
 
@@ -84,20 +84,47 @@
       let text;
       try { text = await readFile(f); } catch (e) { showStatus([{ kind: 'warn', html: esc(f.name) + ' could not be read.' }]); continue; }
       if (/\.json$/i.test(f.name) || looksLikeMap(text)) { state.mapText = text; state.mapName = f.name; }
-      else { state.exportText = text; state.exportName = f.name; }
+      // Each results file is kept: one per class period. The same file twice is one file.
+      else if (!state.exports.some(x => x.text === text)) state.exports.push({ text, name: f.name, label: guessLabel(f.name, state.exports.length) });
     }
     state.demo = false;
     rebuild();
   }
 
+  // "Period 3 Student Analysis Report.csv" names its class; otherwise Class 1, Class 2.
+  function guessLabel(name, i) {
+    const m = /(?:period|per\.?|hour|hr|block|section|sec)[\s_-]*0*(\d{1,2})\b/i.exec(String(name || ''));
+    return m ? 'Period ' + m[1] : 'Class ' + (i + 1);
+  }
   const MAP_IDLE = 'Not loaded. Adds topics, learning targets and correct answers. Without it you still see right and wrong on every question.';
   function fileState() {
-    $('f-export').classList.toggle('ready', !!state.exportText);
+    const n = state.exports.length;
+    $('f-export').classList.toggle('ready', n > 0);
     $('f-map').classList.toggle('ready', !!state.mapText);
-    $('f-export-state').textContent = state.exportText ? 'Loaded: ' + state.exportName : 'Not loaded. A .csv file from the quiz\'s Student Analysis report.';
+    $('f-export-state').textContent = n === 1 ? 'Loaded: ' + state.exports[0].name
+      : (n > 1 ? n + ' files loaded, one class each. Name each class:' : 'Not loaded. A .csv file from the quiz\'s Student Analysis report. One file per class period works too.');
     $('f-map-state').textContent = state.mapText ? 'Loaded: ' + state.mapName : MAP_IDLE;
-    $('clear').hidden = !(state.exportText || state.mapText);
+    $('clear').hidden = !(n || state.mapText);
+    // With two or more files, each one is a class the teacher names.
+    const list = $('class-files');
+    list.hidden = n < 2;
+    list.innerHTML = n < 2 ? '' : state.exports.map((x, i) => '<li><label class="sr-only" for="class-name-' + i + '">Class name for ' + esc(x.name) + '</label>'
+      + '<input class="class-name" id="class-name-' + i + '" data-i="' + i + '" type="text" maxlength="40" value="' + esc(x.label) + '">'
+      + '<span class="muted small" title="' + esc(x.name) + '">' + esc(x.name) + '</span>'
+      + '<button class="btn remove" type="button" data-i="' + i + '" aria-label="Remove ' + esc(x.name) + '">Remove</button></li>').join('');
   }
+  $('class-files').addEventListener('change', e => {
+    const input = e.target.closest('input.class-name');
+    if (!input) return;
+    state.exports[Number(input.dataset.i)].label = input.value.trim() || 'Class ' + (Number(input.dataset.i) + 1);
+    rebuild();
+  });
+  $('class-files').addEventListener('click', e => {
+    const b = e.target.closest('button.remove');
+    if (!b) return;
+    state.exports.splice(Number(b.dataset.i), 1);
+    rebuild();
+  });
 
   function showStatus(items) {
     $('status').innerHTML = items.map(i => '<div class="notice ' + i.kind + '">' + i.html + '</div>').join('');
@@ -126,15 +153,16 @@
       }
     }
     let exp = null;
-    if (state.exportText) {
-      exp = E.readExport(state.exportText);
+    if (state.exports.length) {
+      exp = state.exports.length === 1 ? E.readExport(state.exports[0].text)
+        : E.combineExports(state.exports.map(x => ({ text: x.text, label: x.label })));
       if (!exp.items.length || !exp.students.length) {
         notices.push({ kind: 'warn', html: '<b>The Canvas file could not be read as quiz results.</b><ul>' + (exp.notes.length ? exp.notes : ['No question columns were found.']).map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>Use the Student Analysis report from the quiz\'s Reports page.' });
         exp = null;
       }
     }
     if (!exp || mapRefused) {
-      if (!notices.length && state.mapText) notices.push({ kind: 'ok', html: 'Question map loaded. Add the Canvas results to see the plan.' });
+      if (!notices.length && state.mapText && !state.exports.length) notices.push({ kind: 'ok', html: 'Question map loaded. Add the Canvas results to see the plan.' });
       showStatus(notices);
       hideResults();
       return;
@@ -160,7 +188,7 @@
       notices.push({ kind: problems.length ? 'warn' : 'ok', html: sum + (problems.length ? '<ul>' + problems.map(p => '<li>' + p + '</li>').join('') + '</ul>' : '') });
     } else {
       // No map: Canvas's own points decide right and wrong, question by question.
-      const k = E.mapFromExport(exp, titleFromFile(state.exportName));
+      const k = E.mapFromExport(exp, titleFromFile(state.exports[0].name));
       if (!k.map) {
         notices.push({ kind: 'warn', html: '<b>' + esc(k.problem) + '</b> Add the test\'s question map.' });
         showStatus(notices);
@@ -173,6 +201,10 @@
       notices.push({ kind: 'ok', html: head + 'Read <b>' + map.questions.length + ' question' + (map.questions.length === 1 ? '' : 's') + '</b> from the Canvas file, scored by Canvas.'
         + (skipped > 0 ? ' ' + skipped + ' column(s) had no points and were left out.' : '')
         + ' Canvas\'s file does not say which topic each question is on, so the results are by question. Add the test\'s question map to group them by topic or learning target.' });
+    }
+    if (exp.files) {
+      notices.push({ kind: 'ok', html: 'Combined <b>' + exp.files.length + ' results files</b>, one class each: '
+        + exp.files.map(f => '<b>' + esc(f.label) + '</b> (' + (f.ok ? f.students + ' student' + (f.students === 1 ? '' : 's') : 'not read') + ')').join(', ') + '.' });
     }
     exp.notes.forEach(n => notices.push({ kind: 'ok', html: esc(n) }));
     model = { map, exp, matched };
@@ -199,6 +231,18 @@
 
   function who(s) { return E.display(s, state.anon); }
   function hidden() { return '<span class="hidden-note">hidden on the projector</span>'; }
+  // The order students appear in on every view (Jeff, 2026-11-24): by class period,
+  // by name, or by score, lowest first. "Class" means name when there is only one class.
+  // On the projector, name order would hint at who is who, so numbers decide instead.
+  function sortUsed(a) { return state.sort === 'class' && (a.sections.length < 2 || a.section) ? 'name' : state.sort; }
+  function ordered(a) {
+    const sort = sortUsed(a);
+    const label = s => s.name || s.id || s.key;
+    const byName = (x, y) => (state.anon ? x.n - y.n : label(x).localeCompare(label(y), 'en', { numeric: true, sensitivity: 'base' }) || x.n - y.n);
+    const score = s => (s.possible ? s.earned / s.possible : 0);
+    return a.students.filter(s => s.took).sort((x, y) => (sort === 'score' ? (score(x) - score(y)) || byName(x, y)
+      : sort === 'class' ? String(x.section).localeCompare(String(y.section), 'en', { numeric: true }) || byName(x, y) : byName(x, y)));
+  }
   // A group's name as a person reads it: "Topic 3.1, Empires Expand", "3.1 LT2", "Q7".
   function groupName(a, key, words) {
     if (a.by === 'topic') return 'Topic ' + key + (words ? ', ' + words : '');
@@ -218,6 +262,8 @@
     $('anon-note').hidden = !state.anon;
     $('by').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === a.by)));
     $('rule-label').textContent = 'Retake a ' + a.byLabel.toLowerCase() + ' when the student';
+    $('sort').querySelector('[data-v="class"]').hidden = a.sections.length < 2 || !!a.section;
+    $('sort').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === sortUsed(a))));
     drawHeat(a);
     drawReport(a);
     drawStudents(a);
@@ -246,7 +292,15 @@
     }
     cols.forEach((c, ci) => c.cols.forEach((i, k) => { h += '<th scope="col" class="qn' + (k === 0 && ci > 0 ? ' edge' : '') + '">' + esc(a.questions[i].q.n) + '</th>'; }));
     h += '</tr></thead><tbody>';
-    took.forEach(s => {
+    const width = 2 + cols.reduce((t, c) => t + c.cols.length, 0);
+    const headed = sortUsed(a) === 'class';
+    let current = null;
+    ordered(a).forEach(s => {
+      if (headed && s.section !== current) {
+        current = s.section;
+        const c = a.byClass.find(x => x.section === current);
+        h += '<tr class="sec"><th scope="rowgroup" colspan="' + width + '">' + esc(current || 'No class') + (c ? ' <span>· ' + c.took + ' student' + (c.took === 1 ? '' : 's') + ' · class average ' + pct(c.average) + '</span>' : '') + '</th></tr>';
+      }
       const score = s.possible ? s.earned / s.possible : null;
       h += '<tr><th scope="row" class="who">' + esc(who(s)) + '</th><td class="score num">' + pct(score) + '</td>';
       cols.forEach((c, ci) => c.cols.forEach((i, k) => {
@@ -260,7 +314,7 @@
       }));
       h += '</tr>';
     });
-    h += '</tbody><tfoot><tr><th scope="row" class="who">Class</th><td class="score num">' + pct(classAverage(a)) + '</td>';
+    h += '</tbody><tfoot><tr><th scope="row" class="who">' + (a.section ? esc(a.section) : (a.sections.length > 1 ? 'All classes' : 'Class')) + '</th><td class="score num">' + pct(classAverage(a)) + '</td>';
     cols.forEach((c, ci) => c.cols.forEach((i, k) => {
       const x = a.questions[i];
       h += '<td class="cell pct band-' + band(x.pct) + (k === 0 && ci > 0 ? ' edge' : '') + '" title="' + esc('Question ' + x.q.n + ': ' + pct(x.pct) + ' right') + '">' + (x.pct == null ? '' : Math.round(x.pct * 100)) + '</td>';
@@ -291,6 +345,16 @@
           + '<td><div class="bar"><span class="track"><span class="fill band-' + band(t.pct) + '" data-w="' + (t.pct == null ? 0 : Math.round(t.pct * 100)) + '"></span></span><b>' + pct(t.pct) + '</b></div><span class="muted small">' + t.correct + ' of ' + t.answered + ' answers</span></td>'
           + '<td class="num">' + t.needCount + ' of ' + a.took + '</td></tr>';
       }).join('') + '</tbody></table></div>';
+    // Class by class: the same topics, each period's percent correct side by side.
+    if (a.byClass.length) {
+      h += '<h3 class="sub">Compare classes</h3><p class="muted small intro">Percent correct on each ' + esc(a.byLabel.toLowerCase()) + ', class by class. Choose a class at the top to see only that class everywhere.</p>'
+        + '<div class="scroller"><table class="compare"><thead><tr><th scope="col">' + esc(a.byLabel) + '</th><th scope="col">All classes</th>'
+        + a.byClass.map(c => '<th scope="col">' + esc(c.section) + '</th>').join('') + '</tr></thead><tbody>'
+        + '<tr class="avg"><th scope="row">Average score</th><td class="num">' + pct(classAverage(a)) + '</td>' + a.byClass.map(c => '<td class="num">' + pct(c.average) + ' <span class="muted small">(' + c.took + ')</span></td>').join('') + '</tr>'
+        + rows.map(t => '<tr><th scope="row">' + esc(a.by === 'topic' ? 'Topic ' + t.lt : (a.by === 'question' ? 'Question ' + t.lt.replace(/^Q/, '') : t.lt)) + '</th><td class="num band-' + band(t.pct) + '">' + pct(t.pct) + '</td>'
+          + a.byClass.map(c => { const x = c.targets.find(y => y.lt === t.lt) || {}; return '<td class="num band-' + band(x.pct) + '">' + pct(x.pct) + '</td>'; }).join('') + '</tr>').join('')
+        + '</tbody></table></div>';
+    }
     h += '<h3 class="sub">Who needs each ' + esc(a.byLabel.toLowerCase()) + '</h3><div class="targets">' + rows.filter(t => t.needCount).map(t => {
       const names = t.need.map(k => byKey.get(k)).filter(Boolean);
       return '<article class="target"><div class="target-head"><span class="lt">' + esc(groupName(a, t.lt, a.by === 'question' ? '' : t.text)) + '</span><span class="muted small">' + names.length + ' to retake</span></div>'
@@ -302,7 +366,7 @@
   }
 
   function drawStudents(a) {
-    const took = a.students.filter(s => s.took);
+    const took = ordered(a);
     $('view-students').innerHTML = took.length ? '<div class="scroller"><table><thead><tr><th scope="col">Student</th>' + (state.anon ? '' : '<th scope="col">Class</th>') + '<th scope="col">Score</th><th scope="col">' + esc(a.byLabel) + 's to retake</th><th scope="col">Missed questions</th></tr></thead><tbody>'
       + took.map(s => {
         const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank');
@@ -333,8 +397,7 @@
       return;
     }
     const opts = { style: state.style, count: state.count };
-    const took = a.students.filter(s => s.took);
-    const withMisses = took.filter(s => E.retakePrompt(a, s, opts));
+    const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
     let h = '<ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
     if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
@@ -373,6 +436,7 @@
   seg('names', v => { state.anon = v === 'anon'; });
   seg('by', v => { state.by = v; });
   seg('style', v => { state.style = v; });
+  seg('sort', v => { state.sort = v; });
   $('section').addEventListener('change', e => { state.section = e.target.value; draw(); });
   $('count').addEventListener('change', e => { state.count = Number(e.target.value) || 3; draw(); });
 
@@ -408,12 +472,12 @@
   $('demo').addEventListener('click', () => {
     const d = demoFiles();
     state.mapText = d.map; state.mapName = 'Demo-Retake-Map.json (invented)';
-    state.exportText = d.csv; state.exportName = 'Demo Student Analysis Report.csv (invented)';
+    state.exports = [{ text: d.csv, name: 'Demo Student Analysis Report.csv (invented)', label: 'Class 1' }];
     state.demo = true;
     rebuild();
   });
   $('clear').addEventListener('click', () => {
-    Object.assign(state, { exportText: null, exportName: '', mapText: null, mapName: '', section: '', demo: false });
+    Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false });
     model = null;
     $('status').innerHTML = '';
     hideResults();

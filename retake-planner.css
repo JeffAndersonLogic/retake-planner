@@ -220,3 +220,16 @@ pre.prompt-text{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;paddin
   details{display:block}
   .target,.prompt,tr{break-inside:avoid}
 }
+
+/* class periods (2026-11-24) */
+ul.class-files{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}
+ul.class-files li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;min-width:0}
+ul.class-files input{border:1px solid var(--rule);border-radius:8px;padding:5px 8px;font-family:var(--head);font-weight:700;font-size:12.5px;width:140px;background:var(--paper)}
+ul.class-files .muted{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+ul.class-files .btn.remove{padding:4px 10px;font-size:11.5px}
+table.heat tr.sec th{position:sticky;left:0;text-align:left;padding:8px 12px;background:var(--steel);color:var(--paper);font-family:var(--head);font-size:12.5px;letter-spacing:.02em;text-transform:none;border-bottom:0}
+table.heat tr.sec th span{color:var(--on-dark-muted);font-weight:600}
+table.compare{width:auto;min-width:100%}
+table.compare th[scope=row]{white-space:nowrap;font-family:var(--head);font-size:13px;letter-spacing:0;text-transform:none;color:var(--steel);background:var(--paper)}
+table.compare td{text-align:center;font-weight:700}
+table.compare tr.avg th,table.compare tr.avg td{background:var(--inset);font-weight:800}

@@ -44,10 +44,12 @@
  *   parseCsv(text)                       -> rows (arrays of strings)
  *   parseMap(text)                       -> { map, problems, warnings }
  *   readExport(text)                     -> { layout, students, items, notes }
+ *   combineExports([{ text, label }])    -> one export from several class files
  *   match(map, exp)                      -> { pairs, unmatchedItems, unmatchedQuestions }
  *   mapFromExport(exp, title)            -> { map, matched } from Canvas's own points, no map file
  *   analyze(map, exp, matched, options)  -> { students, targets, questions, columns, by, notes, ... }
  *                                           options: rule 'any'|'most', section, by 'topic'|'lt'|'question'
+ *                                           also: sections, byClass (each class's percent per topic)
  *   planText(analysis, options)          -> plain text, one block per student
  *   planCsv(analysis, options)           -> CSV, one row per student per topic or target
  *   reportRows(analysis)                 -> topics (or targets, or questions), most missed first
@@ -62,7 +64,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.1.0';
+  const VERSION = 'retake-planner/1.2.0';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -430,6 +432,52 @@
     });
   }
 
+  // Several results files at once, one per class period (Jeff, 2026-11-24). A teacher
+  // whose periods are separate Canvas courses downloads one file per course; each
+  // becomes a class named by the teacher. A file that carries its own section column
+  // keeps it. Questions are lined up across files by their wording, in order, so two
+  // questions worded the same in one file stay two questions.
+  //   files: [{ text, label }]  ->  the same shape readExport returns, plus files: [...]
+  function combineExports(files) {
+    const list = (files || []).map((f, i) => ({ label: String(f.label || '').trim() || 'Class ' + (i + 1), exp: readExport(f.text) }));
+    const notes = [];
+    const students = [];
+    const items = new Map();
+    const summary = [];
+    list.forEach(({ label, exp }, fi) => {
+      const ok = exp.items.length > 0 && exp.students.length > 0;
+      summary.push({ label, students: ok ? exp.students.length : 0, questions: ok ? exp.items.length : 0, ok, layout: exp.layout });
+      if (!ok) { notes.push(label + ': ' + (exp.notes[0] || 'this file could not be read as quiz results.')); return; }
+      const prefix = 'File ' + (fi + 1) + ': ';
+      const keyOf = new Map();
+      exp.students.forEach(s => {
+        const key = prefix + s.key;
+        keyOf.set(s.key, key);
+        const unnamed = s.name === s.key && /^Row \d+$/.test(s.key);
+        students.push({ key, name: unnamed ? label + ', ' + s.name : s.name, id: s.id, section: s.section || label });
+      });
+      const seen = new Map();
+      exp.items.forEach(it => {
+        const base = norm(it.label) || 'position ' + it.position;
+        const k = (seen.get(base) || 0) + 1;
+        seen.set(base, k);
+        const key = base + ' #' + k;
+        if (!items.has(key)) items.set(key, { key, label: it.label, position: items.size + 1, type: it.type, responses: {}, _files: 0 });
+        const into = items.get(key);
+        into._files += 1;
+        Object.keys(it.responses).forEach(sk => { into.responses[keyOf.get(sk)] = it.responses[sk]; });
+      });
+      exp.notes.forEach(n => { if (!notes.includes(n)) notes.push(n); });
+    });
+    const good = summary.filter(f => f.ok).length;
+    const all = [...items.values()];
+    if (all.some(it => it._files < good)) {
+      notes.push('Some questions are in only some of the files. Check that every file is from the same test; a question missing from a class\'s file is left out of that class\'s counts.');
+    }
+    all.forEach(it => { delete it._files; });
+    return { layout: 'combined', shape: 'combined', students, items: all, notes, files: summary };
+  }
+
   /* ── matching Canvas's questions to the map ───────────────────────────── */
 
   function optionIndex(q, response) {
@@ -566,25 +614,64 @@
     return map.targets[key] || '';
   }
 
+  // The counts for one set of students: each question, each topic (or target), and
+  // the groups who need exactly the same retake.
+  function tally(pairs, took, ltOrder, gk, by, map) {
+    const questions = pairs.map((p, pi) => {
+      const rs = took.map(s => s.results[pi]).filter(r => r.status !== 'absent' && r.status !== 'unknown');
+      const correct = rs.filter(r => r.status === 'correct').length;
+      const wrongCounts = new Map();
+      rs.forEach(r => {
+        if (r.status === 'wrong' && r.choice >= 0) wrongCounts.set(r.choice, (wrongCounts.get(r.choice) || 0) + 1);
+      });
+      let topWrong = null;
+      wrongCounts.forEach((count, choice) => { if (!topWrong || count > topWrong.count) topWrong = { choice, text: p.q.options[choice], count }; });
+      return { q: p.q, answered: rs.length, correct, blank: rs.filter(r => r.status === 'blank').length,
+        pct: rs.length ? correct / rs.length : null, topWrong };
+    });
+    const targets = ltOrder.map(lt => {
+      const qs = questions.filter(x => gk(x.q) === lt);
+      const answered = qs.reduce((t, x) => t + x.answered, 0);
+      const correct = qs.reduce((t, x) => t + x.correct, 0);
+      const need = took.filter(s => s.targetsMissed.some(e => e.lt === lt));
+      // The learning targets inside a topic, so a topic's card can say what it asks.
+      const lts = [...new Set(qs.map(x => x.q.lt))].filter(x => by === 'topic' && map.targets[x]);
+      return { lt, text: groupWords(by, map, lt, qs[0] && qs[0].q), questions: qs.map(x => x.q.n), pct: answered ? correct / answered : null,
+        need: need.map(s => s.key), needCount: need.length, answered, correct, missed: answered - correct,
+        within: lts.map(x => ({ lt: x, text: map.targets[x] })) };
+    });
+    // Students who need exactly the same targets can take the same retake.
+    const groupMap = new Map();
+    took.forEach(s => {
+      const key = s.targetsMissed.map(e => e.lt).join(' + ');
+      if (!groupMap.has(key)) groupMap.set(key, { lts: s.targetsMissed.map(e => e.lt), students: [] });
+      groupMap.get(key).students.push(s.key);
+    });
+    const groups = [...groupMap.values()].filter(g => g.lts.length).sort((a, b) => b.students.length - a.students.length || a.lts.length - b.lts.length);
+    const average = took.length ? took.reduce((t, s) => t + (s.possible ? s.earned / s.possible : 0), 0) / took.length : null;
+    return { questions, targets, groups, average };
+  }
+
   function analyze(map, exp, matched, options) {
     const rule = options && options.rule === 'most' ? 'most' : 'any';
     const section = options && options.section ? options.section : '';
     const by = groupingOf(map, options && options.by);
     const gk = q => groupKey(by, q);
     const notes = [];
-    let disagreements = 0;
-    let unknown = 0;
-    const roster = exp.students.filter(s => !section || s.section === section);
     const pairs = matched.pairs;
     const ltOrder = [];
     map.questions.forEach(q => { if (!ltOrder.includes(gk(q))) ltOrder.push(gk(q)); });
     // "3.1 LT2" before "3.1 LT10" before "3.2 LT1": course order, not quiz order.
     ltOrder.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 
-    const students = roster.map(s => {
+    // Every student in the file is read first, whatever class is chosen, so that a
+    // student's number is the same in every class view, every sort and every copy.
+    const everyone = exp.students.map(s => {
+      let disagree = 0;
+      let unknown = 0;
       const results = pairs.map(p => {
         const j = judge(p, p.item.responses[s.key]);
-        if (j.disagree) disagreements += 1;
+        if (j.disagree) disagree += 1;
         if (j.status === 'unknown') unknown += 1;
         return Object.assign({ q: p.q }, j);
       });
@@ -600,46 +687,27 @@
         if (r.status !== 'correct') { e.missed += 1; e.questions.push(r.q.n); }
       });
       const targetsMissed = ltOrder.map(lt => byLt.get(lt)).filter(e => e && e.missed > 0 && (rule === 'any' || e.missed * 2 > e.of));
-      return { key: s.key, name: s.name, id: s.id, section: s.section, results, earned, possible, took: counted.length > 0, targetsMissed };
+      return { key: s.key, name: s.name, id: s.id, section: s.section, results, earned, possible, took: counted.length > 0, targetsMissed, _disagree: disagree, _unknown: unknown };
     });
-    const took = students.filter(s => s.took);
     // "Student 3" means the same student on every panel and in every copy.
-    took.forEach((s, i) => { s.n = i + 1; });
+    everyone.filter(s => s.took).forEach((s, i) => { s.n = i + 1; });
+    const students = everyone.filter(s => !section || s.section === section);
+    const took = students.filter(s => s.took);
+    const main = tally(pairs, took, ltOrder, gk, by, map);
 
-    const questions = pairs.map((p, pi) => {
-      const rs = took.map(s => s.results[pi]).filter(r => r.status !== 'absent' && r.status !== 'unknown');
-      const correct = rs.filter(r => r.status === 'correct').length;
-      const wrongCounts = new Map();
-      rs.forEach(r => {
-        if (r.status === 'wrong' && r.choice >= 0) wrongCounts.set(r.choice, (wrongCounts.get(r.choice) || 0) + 1);
-      });
-      let topWrong = null;
-      wrongCounts.forEach((count, choice) => { if (!topWrong || count > topWrong.count) topWrong = { choice, text: p.q.options[choice], count }; });
-      return { q: p.q, answered: rs.length, correct, blank: rs.filter(r => r.status === 'blank').length,
-        pct: rs.length ? correct / rs.length : null, topWrong };
-    });
+    // Class by class, for comparing periods. Only when the file holds more than one
+    // class and no single class is chosen.
+    const sectionNames = [...new Set(everyone.filter(s => s.took && s.section).map(s => s.section))]
+      .sort((x, y) => x.localeCompare(y, 'en', { numeric: true }));
+    const byClass = !section && sectionNames.length > 1 ? sectionNames.map(name => {
+      const t = tally(pairs, everyone.filter(s => s.took && s.section === name), ltOrder, gk, by, map);
+      const n = everyone.filter(s => s.took && s.section === name).length;
+      return { section: name, took: n, average: t.average, targets: t.targets.map(x => ({ lt: x.lt, pct: x.pct, needCount: x.needCount })) };
+    }) : [];
 
-    const targets = ltOrder.map(lt => {
-      const qs = questions.filter(x => gk(x.q) === lt);
-      const answered = qs.reduce((t, x) => t + x.answered, 0);
-      const correct = qs.reduce((t, x) => t + x.correct, 0);
-      const need = took.filter(s => s.targetsMissed.some(e => e.lt === lt));
-      // The learning targets inside a topic, so a topic's card can say what it asks.
-      const lts = [...new Set(qs.map(x => x.q.lt))].filter(x => by === 'topic' && map.targets[x]);
-      return { lt, text: groupWords(by, map, lt, qs[0] && qs[0].q), questions: qs.map(x => x.q.n), pct: answered ? correct / answered : null,
-        need: need.map(s => s.key), needCount: need.length, answered, correct, missed: answered - correct,
-        within: lts.map(x => ({ lt: x, text: map.targets[x] })) };
-    });
-
-    // Students who need exactly the same targets can take the same retake.
-    const groupMap = new Map();
-    took.forEach(s => {
-      const key = s.targetsMissed.map(e => e.lt).join(' + ');
-      if (!groupMap.has(key)) groupMap.set(key, { lts: s.targetsMissed.map(e => e.lt), students: [] });
-      groupMap.get(key).students.push(s.key);
-    });
-    const groups = [...groupMap.values()].filter(g => g.lts.length).sort((a, b) => b.students.length - a.students.length || a.lts.length - b.lts.length);
-
+    const disagreements = students.reduce((t, s) => t + s._disagree, 0);
+    const unknown = students.reduce((t, s) => t + s._unknown, 0);
+    everyone.forEach(s => { delete s._disagree; delete s._unknown; });
     if (disagreements) notes.push(disagreements + ' answer(s) were scored differently by Canvas than by the key. Canvas holds the grade, so Canvas\'s score was used. A regraded question is the usual reason.');
     if (unknown) notes.push(unknown + ' answer(s) could not be read as one of the choices and had no Canvas score, so they are left out of every count.');
     const absent = students.length - took.length;
@@ -651,7 +719,8 @@
       // course order, each an index into students[].results and questions.
       columns: ltOrder.map(g => ({ key: g,
         cols: pairs.map((p, i) => i).filter(i => gk(pairs[i].q) === g) })).filter(c => c.cols.length),
-      students, took: took.length, questions, targets, groups, notes,
+      students, took: took.length, questions: main.questions, targets: main.targets, groups: main.groups, average: main.average,
+      sections: sectionNames, byClass, notes,
       possible: pairs.reduce((t, p) => t + p.q.points, 0)
     };
   }
@@ -698,12 +767,16 @@
   }
   function reportCsv(a, options) {
     const anon = !!(options && options.anon);
-    const head = [a.byLabel.toLowerCase(), 'wording', 'questions', 'percent correct', 'answers correct', 'answers counted', 'students to retake'];
+    const classes = a.byClass || [];
+    const head = [a.byLabel.toLowerCase(), 'wording', 'questions', 'percent correct', 'answers correct', 'answers counted', 'students to retake']
+      .concat(classes.map(c => c.section + ' percent correct'));
     const out = [head.map(csvCell).join(',')];
+    const pc = p => (p == null ? '' : Math.round(p * 100));
     reportRows(a).forEach(t => {
       // Projector safe: a question's own wording is the test, so it stays out.
       const words = anon && a.by === 'question' ? '' : t.text;
-      out.push([t.lt, words, t.questions.join(' '), t.pct == null ? '' : Math.round(t.pct * 100), t.correct, t.answered, t.needCount].map(csvCell).join(','));
+      out.push([t.lt, words, t.questions.join(' '), pc(t.pct), t.correct, t.answered, t.needCount]
+        .concat(classes.map(c => pc((c.targets.find(x => x.lt === t.lt) || {}).pct))).map(csvCell).join(','));
     });
     return out.join('\r\n') + '\r\n';
   }
@@ -778,6 +851,6 @@
       who.map(s => '=== Student ' + s.n + ' ===\n' + missedFor(a, s).map((m, i) => describeMiss(a, m, i)).join('\n\n')).join('\n\n'), ''].join('\n');
   }
 
-  return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, match, mapFromExport, analyze,
+  return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, combineExports, match, mapFromExport, analyze,
     planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
 });
