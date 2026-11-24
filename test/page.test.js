@@ -303,6 +303,62 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-canvas-only.png'), fullPage: true });
   });
 
+  await check('the Map Maker: tag with an AI\'s reply, fix what it missed, use the map, save it', async () => {
+    await page.click('#clear');
+    assert(await page.locator('#maker').isHidden(), 'no Map Maker before a file');
+    await page.setInputFiles('#filepick', [fx.csvFile]);
+    await page.waitForSelector('#results:not([hidden])');
+    assert(await page.locator('#maker').isVisible(), 'the Map Maker is offered with the Canvas file alone');
+    assert(/Map Maker/.test(await page.locator('#status').innerText()), 'the status points to it');
+    await page.click('#maker summary');
+    assert(await page.locator('#maker-table tbody tr').count() === 6, 'one row per question');
+    // Which Canvas question is which: the fixture's wording names its number.
+    const stems = await page.$$eval('#maker-table tbody tr', rows => rows.map(r => r.querySelector('td.q').textContent));
+    const ltOf = k => ['X.1 LT1', 'X.1 LT2', 'X.2 LT1'][(k - 1) % 3];
+    const fixtureN = stems.map(s => Number(/Fixture question (\d+)/.exec(s)[1]));
+    await page.fill('#maker-standards', 'X.1 LT1: I can explain invented idea one.\nX.1 LT2: I can explain invented idea two.\nX.2 LT1: I can compare invented cases.');
+    await page.click('#maker-copy');
+    const prompt = await page.evaluate(() => navigator.clipboard.readText());
+    assert(/Q1\. Fixture question/.test(prompt) && /X\.2 LT1: I can compare/.test(prompt), 'the prompt lists questions and standards');
+    fx.people.forEach(p => assert(!prompt.includes(p) && !prompt.includes(p.split(' ')[0]), p + ' reached the prompt'));
+    assert(!/Period 2/.test(prompt), 'a class name reached the prompt');
+    // The AI's reply, with chatter, and with the last question left out.
+    const reply = ['Here you go:'].concat(fixtureN.slice(0, 5).map((k, i) => 'Q' + (i + 1) + ' | ' + ltOf(k).slice(0, 3) + ' | ' + ltOf(k))).join('\n');
+    await page.fill('#maker-reply', reply);
+    await page.click('#maker-read');
+    const read = await page.locator('#maker-status').innerText();
+    assert(/Filled in 5 of 6/.test(read) && /no tag for question 6/.test(read), read);
+    if (SHOTS) await page.locator('#maker').screenshot({ path: path.join(SHOTS, 'retake-map-maker.png') });
+    await page.click('#maker-use');
+    assert(/Not finished yet.*question 6/.test(await page.locator('#maker-status').innerText()), 'an untagged question stops it, by number');
+    assert(/scored by Canvas/.test(await page.locator('#status').innerText()), 'negative control: nothing changed yet');
+    const last = page.locator('#maker-table tbody tr').nth(5);
+    await last.locator('input.topic').fill(ltOf(fixtureN[5]).slice(0, 3));
+    await last.locator('input.lt').fill(ltOf(fixtureN[5]));
+    await page.click('#maker-use');
+    await page.waitForFunction(() => /Matched/.test(document.getElementById('status').textContent));
+    assert(/Matched 6 of 6/.test(await page.locator('#status').innerText()), await page.locator('#status').innerText());
+    assert(await page.locator('#by-wrap').isVisible(), 'grouping is offered now');
+    assert(await page.locator('#view-targets table.report tbody tr').count() === 2, 'two topics, X.1 and X.2');
+    assert(/I can compare invented cases/.test(await allResultsText()), 'the pasted wording reaches the report');
+    assert(await page.locator('#maker').isVisible(), 'the Map Maker stays open for changes');
+    assert(await page.locator('#maker-table tbody tr').nth(5).locator('input.lt').inputValue() === ltOf(fixtureN[5]), 'the table keeps what was typed');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#maker-save')]);
+    assert(/-Retake-Map\.json$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+    const saved = E.parseMap(fs.readFileSync(await dl.path(), 'utf8'));
+    assert(saved.map && !saved.problems.length, 'the saved map reads back: ' + saved.problems.join(' '));
+    assert(saved.map.questions.length === 6 && Object.keys(saved.map.targets).length === 3, 'every question and standard saved');
+    // Projector safe: the Map Maker shows the test, so it hides.
+    await page.click('#names [data-v="anon"]');
+    assert(await page.locator('#maker-body').isHidden() && await page.locator('#maker-hidden').isVisible(), 'hidden on the projector');
+    assert(!/Fixture question/.test(await page.locator('#maker').innerText()), 'no question wording on the projector');
+    await page.click('#names [data-v="show"]');
+    // A map file brought in replaces it, and the Map Maker steps aside.
+    await page.setInputFiles('#filepick', [fx.mapFile]);
+    await page.waitForFunction(() => /Fixture-Retake-Map/.test(document.getElementById('f-map-state').textContent));
+    assert(await page.locator('#maker').isHidden(), 'a loaded map file needs no Map Maker');
+  });
+
   await check('class periods: one file each, named, compared, filtered and sorted', async () => {
     await page.click('#clear');
     await page.setInputFiles('#filepick', [fx.periodA, fx.periodB, fx.mapFile]);
@@ -441,6 +497,13 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
       assert(over <= 1, tab + ' scrolls sideways by ' + over + 'px');
     }
     if (SHOTS) { await phone.click('#tab-targets'); await phone.screenshot({ path: path.join(SHOTS, 'retake-phone.png'), fullPage: true }); }
+    // The Map Maker's wide table scrolls inside its own box (it pushed the page 400px wide once).
+    await phone.click('#clear');
+    await phone.setInputFiles('#filepick', [fx.csvFile]);
+    await phone.waitForSelector('#maker:not([hidden])');
+    await phone.click('#maker summary');
+    const makerOver = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert(makerOver <= 1, 'the Map Maker scrolls sideways by ' + makerOver + 'px');
     await phone.close();
   });
 

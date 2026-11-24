@@ -47,6 +47,10 @@
  *   combineExports([{ text, label }])    -> one export from several class files
  *   match(map, exp)                      -> { pairs, unmatchedItems, unmatchedQuestions }
  *   mapFromExport(exp, title)            -> { map, matched } from Canvas's own points, no map file
+ *   parseStandards(text)                 -> { targets, order } from a pasted list of standards
+ *   tagPrompt(questions, standards, t)   -> a prompt asking the teacher's AI to tag each question
+ *   parseTags(text)                      -> { tags: { n: { topic, lt } }, targets, read } from its reply
+ *   buildMap({ title, questions, tags, targets, answers }) -> { map, problems }: the Map Maker's map
  *   analyze(map, exp, matched, options)  -> { students, targets, questions, columns, by, notes, ... }
  *                                           options: rule 'any'|'most', section, by 'topic'|'lt'|'question'
  *                                           also: sections, byClass (each class's percent per topic)
@@ -64,7 +68,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.2.1';
+  const VERSION = 'retake-planner/1.3.0';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -151,23 +155,32 @@
     qs.forEach((q, i) => {
       const label = 'Question ' + (q && q.n != null ? q.n : i + 1);
       if (!q || typeof q !== 'object') { problems.push(label + ' is empty.'); return; }
+      // "seen": the Map Maker wrote this question from the Canvas file, so its choices are
+      // the answers students chose, not the test's full list. A question everyone got right
+      // has one, and one nobody got right may have no known answer (answer: null); Canvas's
+      // points still decide right and wrong for it.
+      const seen = q.seen === true;
       const options = Array.isArray(q.options) ? q.options.map(String) : [];
-      if (options.length < 2) { problems.push(label + ' has fewer than two answer choices.'); return; }
+      if (options.length < (seen ? 1 : 2)) { problems.push(label + (seen ? ' has no answer choices.' : ' has fewer than two answer choices.')); return; }
       let answer = q.answer;
       if (typeof answer === 'string' && /^[A-Ha-h]$/.test(answer.trim())) answer = LETTERS.indexOf(answer.trim().toUpperCase());
-      if (!Number.isInteger(answer) || answer < 0 || answer >= options.length) { problems.push(label + ' has no valid correct answer.'); return; }
+      if (seen && answer == null) {
+        answer = -1;
+        warnings.push(label + ' has no correct answer in the map (nobody chose it), so Canvas\'s points decide it.');
+      } else if (!Number.isInteger(answer) || answer < 0 || answer >= options.length) { problems.push(label + ' has no valid correct answer.'); return; }
       const n = q.n != null ? q.n : i + 1;
       if (seenN.has(String(n))) { problems.push(label + ' appears twice.'); return; }
       seenN.add(String(n));
       if (!q.lt) { problems.push(label + ' does not name a learning target.'); return; }
-      if (!targets[q.lt]) warnings.push(label + ' names ' + q.lt + ', which has no wording in the map.');
+      // A label the teacher typed in the Map Maker needs no wording to be useful.
+      if (!targets[q.lt] && !seen) warnings.push(label + ' names ' + q.lt + ', which has no wording in the map.');
       const normed = options.map(norm);
       if (new Set(normed).size !== normed.length) warnings.push(label + ' has two answer choices that read the same.');
       const points = Number(q.points);
       questions.push({
         n, topic: String(q.topic || ''), lt: String(q.lt), kc: String(q.kc || ''), skill: String(q.skill || ''),
         reasoning: String(q.reasoning || ''), source: String(q.source || ''), stem: String(q.stem || ''),
-        options, answer, points: Number.isFinite(points) && points > 0 ? points : 1, rationale: String(q.rationale || ''),
+        options, answer, points: Number.isFinite(points) && points > 0 ? points : 1, rationale: String(q.rationale || ''), seen,
         _opts: normed, _stem: norm(q.stem || '')
       });
     });
@@ -574,7 +587,9 @@
       // Fewer than half the answers matching is not enough to call it this question.
       if (c.hits && c.distinct && c.hits / c.distinct < 0.5 && !c.stemHit) return;
       usedI.add(c.ii); usedQ.add(c.qi);
-      pairs.push({ item: exp.items[c.ii], q: map.questions[c.qi], how: c.how, partial: c.hits < c.distinct });
+      // A Map Maker question lists only the answers one set of classes chose, so another
+      // class choosing a new wrong answer is expected there, not a sign of a wrong match.
+      pairs.push({ item: exp.items[c.ii], q: map.questions[c.qi], how: c.how, partial: c.hits < c.distinct && !map.questions[c.qi].seen });
     });
     pairs.sort((a, b) => map.questions.indexOf(a.q) - map.questions.indexOf(b.q));
     // An item nobody answered with words (no responses at all) is usually a stimulus
@@ -618,6 +633,133 @@
     return {
       map: { format: MAP_FORMAT, title: title || 'This test', version: '', subtitle: '', targets: {}, questions, keyless: true, _owners: new Map() },
       matched: { pairs, unmatchedItems: [], unmatchedQuestions: [] }
+    };
+  }
+
+  /* ── the Map Maker: a question map made from the Canvas file ──────────── */
+
+  // Jeff, 2026-11-24: a map written by hand in JSON is more than most teachers will
+  // ever do, so the page makes one. The Canvas file already holds each question's
+  // wording, the answers students chose and, from Canvas's points, which one is right
+  // (mapFromExport). What it lacks is each question's topic and standard. The teacher
+  // types those beside each question, or pastes their standards into a prompt for their
+  // own AI and pastes the AI's reply back. The prompt carries the test's questions and
+  // nothing about any student. A map made this way marks each question "seen": its
+  // choices are the answers students chose, not the test's full list.
+
+  // A list of standards, one per line, as a teacher would paste it:
+  //   "3.1 LT1: I can explain ...", "KC-3.1.I<tab>The Ottoman ...", "WH.4.2 - Analyze ...",
+  //   "SS.9.12 Explain ..." (a code, then a space). A line with no code is numbered T1, T2.
+  //   -> { targets: { code: wording }, order: [code, ...] }
+  function parseStandards(text) {
+    const targets = {};
+    const order = [];
+    let unnumbered = 0;
+    String(text == null ? '' : text).split(/\r?\n/).forEach(line => {
+      let code = '';
+      let words = '';
+      const raw = String(line).replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '');
+      const tab = raw.indexOf('\t');
+      if (tab > 0) { code = raw.slice(0, tab); words = raw.slice(tab + 1); }
+      else {
+        const s = plain(raw);
+        const m = /^(.{1,40}?)\s*(?::|\s[-–—|]\s)\s*(.+)$/.exec(s)
+          // A code is one word with a digit in it ("SS.9.12", "KC-3.1.I"), then the wording.
+          || /^(\S*\d\S*)\s+(.{3,})$/.exec(s);
+        if (m) { code = m[1]; words = m[2]; } else { words = s; }
+      }
+      code = plain(code);
+      words = plain(words);
+      if (!code && !words) return;
+      if (!code) { unnumbered += 1; code = 'T' + unnumbered; }
+      if (!(code in targets)) order.push(code);
+      targets[code] = words;
+    });
+    return { targets, order };
+  }
+
+  // The prompt the teacher pastes into their own AI. It lists the test's questions,
+  // the choices students made and the correct one when Canvas shows it, never a student.
+  //   questions: mapFromExport(...).map.questions;  standards: parseStandards(...)
+  function tagPrompt(questions, standards, title) {
+    const st = standards || { targets: {}, order: [] };
+    const has = st.order.length > 0;
+    const lines = ['I am a teacher. I am tagging each question on a multiple-choice test, ' + (title || 'my test') + ', with the standard or learning target it assesses, so I can see which standards my students have shown and plan retakes.', ''];
+    if (has) {
+      lines.push('These are the standards, one per line, each starting with its code:', '');
+      st.order.forEach(c => lines.push(c + (st.targets[c] ? ': ' + st.targets[c] : '')));
+      lines.push('', 'For each question, choose the one standard it assesses most directly and give its code exactly as written above. Use only codes from this list.');
+    } else {
+      lines.push('I have not given a list of standards. For each question, write a short code for the learning target it assesses (for example "LT1"), and give the same code to questions that assess the same idea. After the list of questions, add one line per code with what it means, in this form: "LT1: I can explain ...".');
+    }
+    lines.push('Also give each question a topic: the unit or topic number its standard belongs to (for example 3.1), so related standards group together. If there is no such number, use a short name of two or three words.',
+      '', 'Reply with one line per question, in exactly this form, and nothing else before the list:', 'Q1 | topic | code', '', 'The questions:', '');
+    questions.forEach(q => {
+      lines.push('Q' + q.n + '. ' + plain(q.stem));
+      if (q.options.length) lines.push('   Answers students chose: ' + q.options.map(plain).join(' / '));
+      if (q.answer >= 0 && q.options[q.answer]) lines.push('   The correct answer: ' + plain(q.options[q.answer]));
+      lines.push('');
+    });
+    return lines.join('\n');
+  }
+
+  // The AI's reply, read forgivingly: "Q1 | 3.1 | KC-3.1.I", "1. 3.1 | 3.1 LT2",
+  // "Question 4: 3.2 | LT1", a Markdown table row "| Q5 | 3.2 | LT1 |", or just a code
+  // ("Q6 | LT3"). Anything else (the AI's opening sentence, a header row) is skipped.
+  // A line like "LT1: I can explain ..." after the list is a code's wording.
+  //   -> { tags: { n: { topic, lt } }, targets: { code: wording }, read }
+  function parseTags(text) {
+    const tags = {};
+    const targets = {};
+    let read = 0;
+    String(text == null ? '' : text).split(/\r?\n/).forEach(line => {
+      const s = String(line).replace(/[*`]/g, '').replace(/^\s*\|/, '').replace(/\|\s*$/, '').trim();
+      // "Q1" or "Question 1" may be followed by anything; a bare number only by a
+      // separator and a "|" list, so "3.1 LT1: I can ..." is never read as question 3.
+      const m = /^Q(?:uestion)?\s*(\d{1,3})\b\s*[.:)\-|]?\s*(.*)$/i.exec(s)
+        || /^(\d{1,3})(?:\s*[.:)]\s+|\s*\|\s*|\t)(.*[|\t].*)$/.exec(s);
+      if (m && m[2]) {
+        const parts = m[2].split(/\s*\|\s*|\t+/).map(plain).filter(Boolean);
+        if (!parts.length) return;
+        const topic = parts.length > 1 ? parts[0] : '';
+        const lt = parts.length > 1 ? parts[1] : parts[0];
+        if (/^(topic|code|standard)$/i.test(lt)) return; // a header row
+        tags[Number(m[1])] = { topic, lt };
+        read += 1;
+        return;
+      }
+      const w = /^([A-Za-z][\w.\-]{0,20})\s*:\s*(.{3,})$/.exec(plain(s));
+      if (w) targets[w[1]] = w[2];
+    });
+    return { tags, targets, read };
+  }
+
+  // The finished map, in the retake-planner-map/1 format parseMap reads.
+  //   o: { title, questions (mapFromExport's), tags: { n: { topic, lt } },
+  //        targets: { code: wording }, answers: { n: typed correct answer } }
+  //   -> { map (a plain object, ready for JSON), problems: [...] }
+  function buildMap(o) {
+    const tags = o.tags || {};
+    const typed = o.answers || {};
+    const problems = [];
+    const untagged = o.questions.filter(q => !(tags[q.n] && plain(tags[q.n].lt))).map(q => q.n);
+    if (untagged.length) problems.push('Give every question a standard or learning target. Still empty: question' + (untagged.length > 1 ? 's ' : ' ') + untagged.join(', ') + '.');
+    const questions = o.questions.map(q => {
+      const options = q.options.slice();
+      let answer = q.answer >= 0 ? q.answer : null;
+      const t = plain(typed[q.n]);
+      if (answer == null && t) {
+        const i = options.findIndex(x => norm(x) === norm(t));
+        answer = i >= 0 ? i : options.push(t) - 1;
+      }
+      const tag = tags[q.n] || {};
+      return { n: q.n, topic: plain(tag.topic), lt: plain(tag.lt), stem: q.stem, options, answer, points: q.points, seen: true };
+    });
+    const targets = {};
+    Object.keys(o.targets || {}).forEach(k => { targets[k] = String(o.targets[k] || ''); });
+    return {
+      map: { format: MAP_FORMAT, title: plain(o.title) || 'Untitled test', version: '', made: 'Retake Planner Map Maker', targets, topics: {}, questions },
+      problems
     };
   }
 
@@ -908,6 +1050,6 @@
       who.map(s => '=== Student ' + s.n + ' ===\n' + missedFor(a, s).map((m, i) => describeMiss(a, m, i)).join('\n\n')).join('\n\n'), ''].join('\n');
   }
 
-  return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, combineExports, match, mapFromExport, analyze,
-    planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
+  return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, combineExports, match, mapFromExport,
+    parseStandards, tagPrompt, parseTags, buildMap, analyze, planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
 });

@@ -11,7 +11,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <title>Retake Planner | ANDERSONLOGIC ai</title>
-<link rel="stylesheet" href="retake-planner.css?v=1.2.1">
+<link rel="stylesheet" href="retake-planner.css?v=1.3.0">
 <link rel="icon" type="image/png" href="assets/images/brand/andersonlogic/al-favicon.png">
 </head>
 <body>
@@ -75,6 +75,36 @@
     </section>
 
     <div id="status" role="status" class="stack"></div>
+    <section class="panel" id="maker" aria-labelledby="maker-title" hidden>
+      <details id="maker-open">
+        <summary><h2 id="maker-title">Map Maker</h2><span class="muted small">Group these results by topic and standard: tag each question once, then save the map for next time.</span></summary>
+        <p class="muted small" id="maker-hidden" hidden>The Map Maker is hidden on the projector: it shows the test's questions and answers. Turn Projector safe off to use it.</p>
+        <div id="maker-body" class="stack">
+          <p class="muted small">Canvas's file already gives each question's wording and, from its points, the correct answer. What it does not give is the standard each question assesses. Tag each one below: type it yourself, or let the AI your school allows do it. The map you save holds the correct answers, so keep it private and share it only with teachers who give the same test.</p>
+          <ol class="maker-steps">
+            <li>
+              <label for="maker-standards"><b>Paste your standards</b> (optional), one per line with its code first: a learning target (<code>3.1 LT1: I can explain ...</code>), a state standard, or a College Board CED Key Concept.</label>
+              <textarea id="maker-standards" rows="4" spellcheck="false" placeholder="3.1 LT1: I can explain how gunpowder changed empires&#10;KC-3.1.I: Empires expanded ...&#10;WH.4.2: Analyze ..."></textarea>
+            </li>
+            <li>
+              <span><b>Tag the questions</b> in the table below, or with your AI:</span>
+              <div class="row"><button class="btn primary" type="button" id="maker-copy">Copy the tagging prompt</button><span class="muted small">Paste it into your AI. It holds the test's questions and no student's name or answers.</span></div>
+              <label for="maker-reply" class="small">Then paste the AI's reply here:</label>
+              <textarea id="maker-reply" rows="4" spellcheck="false" placeholder="Q1 | 3.1 | 3.1 LT1&#10;Q2 | 3.1 | 3.1 LT2"></textarea>
+              <div class="row"><button class="btn" type="button" id="maker-read">Fill in the table from the reply</button></div>
+            </li>
+            <li>
+              <span><b>Check the table, then use the map.</b></span>
+              <div class="row"><label class="ctl-label" for="maker-name">Test name</label><input class="text" id="maker-name" type="text" maxlength="80"></div>
+              <div class="row"><button class="btn dark" type="button" id="maker-use">Use this map</button><button class="btn" type="button" id="maker-save">Save the map file</button><span class="muted small">Next time, drop the saved file in beside the Canvas results.</span></div>
+            </li>
+          </ol>
+          <div id="maker-status" role="status" class="stack"></div>
+          <datalist id="maker-codes"></datalist>
+          <div id="maker-table"></div>
+        </div>
+      </details>
+    </section>
 
     <section class="panel" id="results" aria-labelledby="results-title" hidden>
       <h2 id="results-title">Results</h2>
@@ -118,7 +148,7 @@
 <footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself.</div></footer>
 <!-- ?v= is the version (package.json): a browser that kept the last version's script for its ten
      minutes would otherwise run old code under new buttons (2026-11-24). test/page.test.js checks it. -->
-<script src="retake-planner-engine.js?v=1.2.1"></script>
-<script src="retake-planner-app.js?v=1.2.1"></script>
+<script src="retake-planner-engine.js?v=1.3.0"></script>
+<script src="retake-planner-app.js?v=1.3.0"></script>
 </body>
 </html>

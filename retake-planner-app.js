@@ -18,7 +18,12 @@
 
   const state = {
     exports: [], mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
-    by: 'topic', style: 'retake', count: 3, sort: 'class'
+    by: 'topic', style: 'retake', count: 3, sort: 'class',
+    // The Map Maker (2026-11-24): what the teacher has typed or pasted, kept only in this
+    // tab. Tags are keyed by each question's wording, so adding a second class's file
+    // keeps them. madeHere: the map in use was made on this page, so the Map Maker stays
+    // open for changes.
+    maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '' }, madeHere: false
   };
   let model = null; // { map, exp, matched, analysis }
 
@@ -83,7 +88,7 @@
     for (const f of files) {
       let text;
       try { text = await readFile(f); } catch (e) { showStatus([{ kind: 'warn', html: esc(f.name) + ' could not be read.' }]); continue; }
-      if (/\.json$/i.test(f.name) || looksLikeMap(text)) { state.mapText = text; state.mapName = f.name; }
+      if (/\.json$/i.test(f.name) || looksLikeMap(text)) { state.mapText = text; state.mapName = f.name; state.madeHere = false; }
       // Each results file is kept: one per class period. The same file twice is one file.
       else if (!state.exports.some(x => x.text === text)) state.exports.push({ text, name: f.name, label: guessLabel(f.name, state.exports.length) });
     }
@@ -129,7 +134,7 @@
   function showStatus(items) {
     $('status').innerHTML = items.map(i => '<div class="notice ' + i.kind + '">' + i.html + '</div>').join('');
   }
-  function hideResults() { $('results').hidden = true; stats(null); }
+  function hideResults() { $('results').hidden = true; $('maker').hidden = true; stats(null); }
   // "Era 2 Exam Student Analysis Report.csv" names the test well enough for a prompt.
   function titleFromFile(name) {
     const t = String(name || '').replace(/\.[a-z]+$/i, '').replace(/[_]+/g, ' ').replace(/\s*student analysis( report)?\s*/i, ' ').trim();
@@ -200,7 +205,7 @@
       const skipped = exp.items.length - map.questions.length;
       notices.push({ kind: 'ok', html: head + 'Read <b>' + map.questions.length + ' question' + (map.questions.length === 1 ? '' : 's') + '</b> from the Canvas file, scored by Canvas.'
         + (skipped > 0 ? ' ' + skipped + ' column(s) had no points and were left out.' : '')
-        + ' Canvas\'s file does not say which topic each question is on, so the results are by question. Add the test\'s question map to group them by topic or learning target.' });
+        + ' Canvas\'s file does not say which topic each question is on, so the results are by question. Add the test\'s question map, or make one in the <b>Map Maker</b> below, to group them by topic or standard.' });
     }
     if (exp.files) {
       notices.push({ kind: 'ok', html: 'Combined <b>' + exp.files.length + ' results files</b>, one class each: '
@@ -208,6 +213,10 @@
     }
     exp.notes.forEach(n => notices.push({ kind: 'ok', html: esc(n) }));
     model = { map, exp, matched };
+    // The Map Maker's questions always come from the Canvas file itself.
+    const fromCanvas = E.mapFromExport(exp, titleFromFile(state.exports[0].name));
+    model.draft = fromCanvas.map ? fromCanvas.map.questions : [];
+    model.defaultTitle = titleFromFile(state.exports[0].name);
     // Classes, for a department file holding several sections.
     const sections = [...new Set(exp.students.map(s => s.section).filter(Boolean))].sort();
     $('section-wrap').hidden = sections.length < 2;
@@ -283,6 +292,7 @@
     drawQuestions(a);
     drawPrompts(a);
     drawGroups(a);
+    drawMaker();
     // Widths through the style object: the page's lock refuses inline style attributes.
     $('results').querySelectorAll('[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
   }
@@ -435,6 +445,141 @@
         : '<p class="empty">No two students need exactly the same set. Use the Class report to write one set of questions per ' + esc(a.byLabel.toLowerCase()) + ' and give each student the sets they need.</p>');
   }
 
+  /* ── the Map Maker ────────────────────────────────────────────────────── */
+  // Shown when the results came from the Canvas file alone, or from a map made here. The
+  // teacher tags each question with a topic and a standard, by typing or by pasting the
+  // reply of their own AI to a prompt this page writes, then uses or saves the map.
+  // Nothing here leaves the page; the prompt holds the test's questions and no student.
+
+  // One key per question, from its wording, so tags survive a second class's file.
+  function makerKeys(qs) {
+    const seen = new Map();
+    return qs.map(q => {
+      const base = E.norm(q.stem) || 'q' + q.n;
+      const k = (seen.get(base) || 0) + 1;
+      seen.set(base, k);
+      return base + '#' + k;
+    });
+  }
+  function makerStatus(items) {
+    $('maker-status').innerHTML = items.map(i => '<div class="notice ' + i.kind + '">' + i.html + '</div>').join('');
+  }
+  function makerCodes() {
+    const st = E.parseStandards(state.maker.standards);
+    $('maker-codes').innerHTML = st.order.map(c => '<option value="' + esc(c) + '">' + esc(st.targets[c]) + '</option>').join('');
+  }
+  function shorten(s, n) { const t = E.plain(s); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; }
+
+  function drawMaker() {
+    const show = !!(model && model.draft && model.draft.length && (model.map.keyless || state.madeHere));
+    $('maker').hidden = !show;
+    if (!show) return;
+    $('maker-hidden').hidden = !state.anon;
+    $('maker-body').hidden = state.anon;
+    if (state.anon) return;
+    if (!$('maker-name').value) $('maker-name').value = state.maker.name || model.defaultTitle;
+    makerCodes();
+    const keys = makerKeys(model.draft);
+    $('maker-table').innerHTML = '<div class="scroller"><table class="maker"><thead><tr><th scope="col">Q</th><th scope="col">Question</th><th scope="col">Correct answer</th><th scope="col">Topic</th><th scope="col">Standard or target</th></tr></thead><tbody>'
+      + model.draft.map((q, i) => {
+        const k = keys[i];
+        const t = state.maker.tags[k] || {};
+        const known = q.answer >= 0 && q.options[q.answer];
+        return '<tr data-k="' + esc(k) + '"><td class="num">' + esc(q.n) + '</td>'
+          + '<td class="q"><span class="answer" title="' + esc(E.plain(q.stem)) + '">' + esc(shorten(q.stem, 220)) + '</span></td>'
+          + '<td class="q">' + (known ? '<span class="answer">' + esc(shorten(q.options[q.answer], 140)) + '</span>'
+            : '<input class="text ans" type="text" aria-label="Correct answer for question ' + esc(q.n) + '" placeholder="Nobody chose it: type it (optional)" value="' + esc(state.maker.answers[k] || '') + '">') + '</td>'
+          + '<td><input class="text topic" type="text" maxlength="40" aria-label="Topic for question ' + esc(q.n) + '" value="' + esc(t.topic || '') + '"></td>'
+          + '<td><input class="text lt" type="text" maxlength="60" list="maker-codes" aria-label="Standard for question ' + esc(q.n) + '" value="' + esc(t.lt || '') + '"></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  $('maker-table').addEventListener('input', e => {
+    const row = e.target.closest('tr[data-k]');
+    if (!row) return;
+    const k = row.dataset.k;
+    if (e.target.classList.contains('ans')) { state.maker.answers[k] = e.target.value; return; }
+    const t = state.maker.tags[k] || (state.maker.tags[k] = { topic: '', lt: '' });
+    if (e.target.classList.contains('topic')) t.topic = e.target.value;
+    if (e.target.classList.contains('lt')) t.lt = e.target.value;
+  });
+  $('maker-standards').addEventListener('input', e => { state.maker.standards = e.target.value; makerCodes(); });
+  $('maker-name').addEventListener('input', e => { state.maker.name = e.target.value; });
+
+  $('maker-copy').addEventListener('click', () => {
+    if (!model || !model.draft || state.anon) return;
+    const text = E.tagPrompt(model.draft, E.parseStandards(state.maker.standards), $('maker-name').value.trim() || model.defaultTitle);
+    copyText(text, $('maker-copy'));
+  });
+
+  $('maker-read').addEventListener('click', () => {
+    if (!model || !model.draft) return;
+    const r = E.parseTags($('maker-reply').value);
+    if (!r.read) {
+      makerStatus([{ kind: 'warn', html: '<b>No tags were found in the reply.</b> Each line should look like <code>Q1 | 3.1 | 3.1 LT1</code>: the question number, its topic, then its standard.' }]);
+      return;
+    }
+    const st = E.parseStandards(state.maker.standards);
+    const keys = makerKeys(model.draft);
+    const missing = [];
+    const strange = [];
+    let filled = 0;
+    model.draft.forEach((q, i) => {
+      const t = r.tags[q.n];
+      if (!t) { missing.push(q.n); return; }
+      state.maker.tags[keys[i]] = { topic: t.topic, lt: t.lt };
+      filled += 1;
+      if (st.order.length && !(t.lt in st.targets)) strange.push('question ' + q.n + ' (' + t.lt + ')');
+    });
+    state.maker.replyTargets = r.targets;
+    drawMaker();
+    const notes = [];
+    if (missing.length) notes.push('The reply has no tag for question' + (missing.length > 1 ? 's ' : ' ') + missing.join(', ') + '. Type ' + (missing.length > 1 ? 'those' : 'that one') + ' in the table.');
+    if (strange.length) notes.push('Not in your list of standards: ' + esc(strange.join(', ')) + '. Check ' + (strange.length > 1 ? 'them' : 'it') + ' in the table.');
+    makerStatus([{ kind: notes.length ? 'warn' : 'ok', html: 'Filled in <b>' + filled + ' of ' + model.draft.length + '</b> questions from the reply. Check the table; the AI can be wrong.'
+      + (notes.length ? '<ul>' + notes.map(n => '<li>' + n + '</li>').join('') + '</ul>' : '') }]);
+  });
+
+  // The map, from the table as it stands now.
+  function makerMap() {
+    const keys = makerKeys(model.draft);
+    const tags = {};
+    const answers = {};
+    model.draft.forEach((q, i) => {
+      if (state.maker.tags[keys[i]]) tags[q.n] = state.maker.tags[keys[i]];
+      if (state.maker.answers[keys[i]]) answers[q.n] = state.maker.answers[keys[i]];
+    });
+    // Every pasted standard is kept, tested or not; a code the AI explained is kept
+    // only when a question uses it.
+    const used = new Set(Object.values(tags).map(t => E.plain(t.lt)));
+    const targets = {};
+    Object.keys(state.maker.replyTargets || {}).forEach(c => { if (used.has(c)) targets[c] = state.maker.replyTargets[c]; });
+    Object.assign(targets, E.parseStandards(state.maker.standards).targets);
+    return E.buildMap({ title: $('maker-name').value.trim() || model.defaultTitle, questions: model.draft, tags, targets, answers });
+  }
+  function makerReady() {
+    if (!model || !model.draft) return null;
+    const b = makerMap();
+    if (b.problems.length) { makerStatus([{ kind: 'warn', html: '<b>Not finished yet.</b> ' + esc(b.problems.join(' ')) }]); return null; }
+    return b.map;
+  }
+  $('maker-use').addEventListener('click', () => {
+    const map = makerReady();
+    if (!map) return;
+    state.mapText = JSON.stringify(map);
+    state.mapName = map.title + ' (made in the Map Maker, not saved yet)';
+    state.maker.name = map.title;
+    state.madeHere = true;
+    rebuild();
+    makerStatus([{ kind: 'ok', html: 'The results above now use this map, grouped by topic. Choose <b>Save the map file</b> to use it again next time. Change anything in the table, then choose <b>Use this map</b> again.' }]);
+  });
+  $('maker-save').addEventListener('click', () => {
+    const map = makerReady();
+    if (!map) return;
+    download(JSON.stringify(map, null, 2) + '\n', fileStem(map.title) + '-Retake-Map.json', 'application/json');
+    if (state.madeHere) { state.mapName = map.title + ' (made in the Map Maker)'; fileState(); }
+    makerStatus([{ kind: 'ok', html: 'Saved <b>' + esc(fileStem(map.title)) + '-Retake-Map.json</b>. It is the answer key: keep it off student-shared drives.' }]);
+  });
+
   /* ── controls ─────────────────────────────────────────────────────────── */
   function seg(id, after) {
     $(id).addEventListener('click', e => {
@@ -487,11 +632,16 @@
     state.mapText = d.map; state.mapName = 'Demo-Retake-Map.json (invented)';
     state.exports = [{ text: d.csv, name: 'Demo Student Analysis Report.csv (invented)', label: 'Class 1' }];
     state.demo = true;
+    state.madeHere = false;
     rebuild();
   });
   $('clear').addEventListener('click', () => {
-    Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false });
+    Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false, madeHere: false,
+      maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '' } });
     model = null;
+    ['maker-standards', 'maker-reply', 'maker-name'].forEach(id => { $(id).value = ''; });
+    $('maker-status').innerHTML = '';
+    $('maker-open').open = false;
     $('status').innerHTML = '';
     hideResults();
     fileState();
@@ -530,12 +680,14 @@
     const text = E.classPrompt(model.analysis, { style: state.style, count: state.count });
     if (text) copyText(text, $('copy-class'));
   });
-  function save(text, suffix) {
-    const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
+  function fileStem(title) { return String(title || 'Retake').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'Retake'; }
+  function save(text, suffix) { download('﻿' + text, fileStem(model.map.title) + suffix, 'text/csv;charset=utf-8'); }
+  function download(text, name, type) {
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = (model.map.title || 'Retake').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + suffix;
+    link.download = name;
     document.body.appendChild(link);
     link.click();
     link.remove();

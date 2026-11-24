@@ -20,6 +20,8 @@ AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository hold
 - **A retake prompt never carries a student's name or id**, only "Student N". The page writes the
   prompt; the teacher pastes it into their own AI. The page never contacts an AI.
 - **Projector safe also hides the retake prompts**: they hold the test's questions and answers.
+- **The Map Maker's tagging prompt carries the test's questions and nothing about any student**,
+  and Projector safe hides the Map Maker. A map it saves is an answer key like any other.
 - Writing: no em dashes or en dashes in running prose.
 
 ## Brand
