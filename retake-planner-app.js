@@ -471,7 +471,7 @@
     }
     const opts = { style: state.style, count: state.count };
     const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
-    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into Raina in MagicSchool, or another AI your school allows (ChatGPT, Claude and Gemini work too). The buttons above open each one in a new tab.</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
     if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
       const text = E.retakePrompt(a, s, opts);

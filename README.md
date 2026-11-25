@@ -29,6 +29,9 @@ It reads results. It does not grade. Canvas holds every grade.
      AI your school allows. Choose **New retake questions** and how many per student, or
      **Test corrections**. The AI writes open-ended questions on what each student missed;
      read and edit them before a student sees them.
+     Buttons beside the prompts open MagicSchool (first, with its icon), ChatGPT, Claude or
+     Gemini in a new tab; the page itself still sends nothing anywhere. MagicSchool is a
+     trademark of Magic School, Inc.; the planner links to it and is not affiliated with it.
    - **Same retake:** students who missed exactly the same topics.
 4. **Group by** topic (the default), learning target, or question.
 5. **Sort students by** class, name, or score (lowest first). The same order is used on every view.

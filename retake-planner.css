@@ -214,6 +214,13 @@ table.heat th.std{min-width:44px;padding:6px 8px;white-space:nowrap}
 table.heat th.std.thin,table.report.standards tr.thin td{color:var(--iron)}
 ul.untested{margin:0 0 8px}
 
+/* Open your AI (2026-11-25): links that open the teacher's AI in a new tab. The page itself
+   still sends nothing anywhere; MagicSchool first, with its icon, because ZCS licenses it. */
+.ai-links{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex-basis:100%}
+a.btn{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--steel)}
+.btn.ai.magic{border-color:#6D3CE8;border-width:2px;padding:8px 15px}
+.btn.ai img{width:18px;height:18px;border-radius:4px;display:block}
+
 /* the Map Maker (2026-11-24): folded shut until the teacher opens it */
 #maker summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
 #maker summary::-webkit-details-marker{display:none}

@@ -335,6 +335,34 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await page.click('#tab-heat');
   });
 
+  await check('Open your AI: MagicSchool first with its icon, each AI in a new tab', async () => {
+    await page.click('#clear');
+    await page.click('#demo');
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#tab-prompts');
+    await page.waitForFunction(() => { const i = document.querySelector('#prompt-tools .ai-links img'); return i && i.complete; });
+    const read = sel => page.$$eval(sel, as => as.map(a => { const i = a.querySelector('img'); return { href: a.href, target: a.target, rel: a.rel, text: a.textContent.trim(), icon: i ? i.naturalWidth > 0 : null }; }));
+    const links = await read('#prompt-tools .ai-links a');
+    assert(links.length === 4, 'four AI buttons: ' + links.length);
+    assert(links[0].href === 'https://app.magicschool.ai/' && /^MagicSchool/.test(links[0].text), 'MagicSchool first: ' + JSON.stringify(links[0]));
+    assert(links[0].icon === true, 'the MagicSchool icon loads');
+    assert(links.slice(1).every(l => l.icon === null), 'only MagicSchool carries a logo');
+    assert(JSON.stringify(links.map(l => l.href)) === JSON.stringify(['https://app.magicschool.ai/', 'https://chatgpt.com/', 'https://claude.ai/new', 'https://gemini.google.com/app']), links.map(l => l.href).join(' '));
+    assert(links.every(l => l.target === '_blank' && /noopener/.test(l.rel) && /noreferrer/.test(l.rel)), 'each opens a new tab and passes nothing back');
+    assert(links.every(l => /opens in a new tab/.test(l.text)), 'a screen reader hears that it opens a new tab');
+    await page.click('#names [data-v="anon"]');
+    assert(await page.locator('#prompt-tools .ai-links').isHidden(), 'hidden with the prompts on the projector');
+    await page.click('#names [data-v="show"]');
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', [fx.csvFile]);
+    await page.waitForSelector('#maker:not([hidden])');
+    await page.click('#maker summary');
+    const maker = await read('#maker .ai-links a');
+    assert(maker.length === 4 && maker[0].href === 'https://app.magicschool.ai/', 'the Map Maker offers the same buttons');
+    await page.click('#maker summary');
+    await page.click('#tab-heat');
+  });
+
   await check('the Map Maker: tag with an AI\'s reply, fix what it missed, use the map, save it', async () => {
     await page.click('#clear');
     assert(await page.locator('#maker').isHidden(), 'no Map Maker before a file');
@@ -484,7 +512,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js',
       '/assets/fonts/andersonlogic/manrope-latin-var.woff2', '/assets/fonts/andersonlogic/inter-latin-var.woff2',
       '/assets/images/brand/andersonlogic/al-logo-mark.png', '/assets/images/brand/andersonlogic/al-logo-wordmark.png',
-      '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png']);
+      '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png',
+      '/assets/images/partners/magicschool-icon.png']);
     const stray = requests.filter(u => !u.startsWith('data:') && !u.startsWith('blob:') && !own.has(u.replace(origin, '').replace(/\?v=[\d.]+$/, '')));
     assert(!stray.length, 'unexpected requests: ' + stray.join(', '));
     // Negative control: a fetch from the page is refused by its policy and recorded.

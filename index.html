@@ -11,7 +11,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <title>Retake Planner | ANDERSONLOGIC ai</title>
-<link rel="stylesheet" href="retake-planner.css?v=1.4.0">
+<link rel="stylesheet" href="retake-planner.css?v=1.5.0">
 <link rel="icon" type="image/png" href="assets/images/brand/andersonlogic/al-favicon.png">
 </head>
 <body>
@@ -88,7 +88,8 @@
             </li>
             <li>
               <span><b>Tag the questions</b> in the table below, or with your AI:</span>
-              <div class="row"><button class="btn primary" type="button" id="maker-copy">Copy the tagging prompt</button><span class="muted small">Paste it into your AI. It holds the test's questions and no student's name or answers.</span></div>
+              <div class="row"><button class="btn primary" type="button" id="maker-copy">Copy the tagging prompt</button><span class="muted small">It holds the test's questions and no student's name or answers.</span></div>
+              <div class="ai-links" role="group" aria-label="Open your AI in a new tab"><span class="ctl-label">Paste it into your AI</span><a class="btn ai magic" href="https://app.magicschool.ai/" target="_blank" rel="noopener noreferrer"><img src="assets/images/partners/magicschool-icon.png" width="18" height="18" alt="">MagicSchool<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">ChatGPT<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Claude<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Gemini<span class="sr-only"> (opens in a new tab)</span></a></div>
               <label for="maker-reply" class="small">Then paste the AI's reply here:</label>
               <textarea id="maker-reply" rows="4" spellcheck="false" placeholder="Q1 | 3.1 | 3.1 LT1&#10;Q2 | 3.1 | 3.1 LT2"></textarea>
               <div class="row"><button class="btn" type="button" id="maker-read">Fill in the table from the reply</button></div>
@@ -140,6 +141,7 @@
           <div><span class="ctl-label" id="style-label">Write</span><span class="seg" id="style" role="group" aria-labelledby="style-label"><button type="button" aria-pressed="true" data-v="retake">New retake questions</button><button type="button" aria-pressed="false" data-v="corrections">Test corrections</button></span></div>
           <div id="count-wrap"><label class="ctl-label" for="count">Questions per student</label><select class="sel" id="count"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></div>
           <div class="right"><button class="btn primary" type="button" id="copy-class">Copy one prompt for the whole class</button></div>
+          <div class="ai-links" role="group" aria-label="Open your AI in a new tab"><span class="ctl-label">Then open your AI</span><a class="btn ai magic" href="https://app.magicschool.ai/" target="_blank" rel="noopener noreferrer"><img src="assets/images/partners/magicschool-icon.png" width="18" height="18" alt="">MagicSchool<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">ChatGPT<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Claude<span class="sr-only"> (opens in a new tab)</span></a><a class="btn ai" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Gemini<span class="sr-only"> (opens in a new tab)</span></a></div>
         </div>
         <div id="prompt-list"></div>
       </div>
@@ -147,10 +149,10 @@
     </section>
   </div>
 </main>
-<footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself.</div></footer>
+<footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself. MagicSchool is a trademark of Magic School, Inc.; the planner links to it and is not affiliated with it.</div></footer>
 <!-- ?v= is the version (package.json): a browser that kept the last version's script for its ten
      minutes would otherwise run old code under new buttons (2026-11-24). test/page.test.js checks it. -->
-<script src="retake-planner-engine.js?v=1.4.0"></script>
-<script src="retake-planner-app.js?v=1.4.0"></script>
+<script src="retake-planner-engine.js?v=1.5.0"></script>
+<script src="retake-planner-app.js?v=1.5.0"></script>
 </body>
 </html>
