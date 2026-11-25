@@ -36,5 +36,6 @@ are the brand's interim set (tokens at the top of `retake-planner.css`). In text
 
 ## Tests
 
-`npm test` (offline) and `npm run test:browser` (needs `npm i --no-save playwright-core`). Any check
+`npm test` (offline) and `npm run test:browser` (install the pinned tooling with `npm ci`, then
+`npx --no-install playwright-core install chromium`). Any check
 used as evidence must be shown capable of failing; each test carries negative controls.

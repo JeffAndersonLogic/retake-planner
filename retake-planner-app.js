@@ -23,7 +23,7 @@
     // tab. Tags are keyed by each question's wording, so adding a second class's file
     // keeps them. madeHere: the map in use was made on this page, so the Map Maker stays
     // open for changes.
-    maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '' }, madeHere: false
+    maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '', version: '' }, madeHere: false
   };
   let model = null; // { map, exp, matched, analysis }
 
@@ -88,7 +88,11 @@
     for (const f of files) {
       let text;
       try { text = await readFile(f); } catch (e) { showStatus([{ kind: 'warn', html: esc(f.name) + ' could not be read.' }]); continue; }
-      if (/\.json$/i.test(f.name) || looksLikeMap(text)) { state.mapText = text; state.mapName = f.name; state.madeHere = false; }
+      if (/\.json$/i.test(f.name) || looksLikeMap(text)) {
+        state.mapText = text; state.mapName = f.name; state.madeHere = false;
+        state.maker = { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '', version: '' };
+        ['maker-standards', 'maker-reply', 'maker-name', 'maker-version'].forEach(id => { $(id).value = ''; });
+      }
       // Each results file is kept: one per class period. The same file twice is one file.
       else if (!state.exports.some(x => x.text === text)) state.exports.push({ text, name: f.name, label: guessLabel(f.name, state.exports.length) });
     }
@@ -109,6 +113,7 @@
     $('f-export-state').textContent = n === 1 ? 'Loaded: ' + state.exports[0].name
       : (n > 1 ? n + ' files loaded, one class each. Name each class:' : 'Not loaded. A .csv file from the quiz\'s Student Analysis report. One file per class period works too.');
     $('f-map-state').textContent = state.mapText ? 'Loaded: ' + state.mapName : MAP_IDLE;
+    $('remove-map').hidden = !state.mapText;
     $('clear').hidden = !(n || state.mapText);
     // With two or more files, each one is a class the teacher names.
     const list = $('class-files');
@@ -142,6 +147,14 @@
   }
 
   function rebuild() {
+    try { rebuildModel(); }
+    catch (e) {
+      model = null;
+      hideResults();
+      showStatus([{ kind: 'warn', html: '<b>The files could not be processed.</b> Check that these are the original Canvas CSV and a valid question map. Remove the map to try the results on their own, or start over.' }]);
+    }
+  }
+  function rebuildModel() {
     fileState();
     model = null;
     const notices = [];
@@ -160,7 +173,12 @@
     let exp = null;
     if (state.exports.length) {
       exp = state.exports.length === 1 ? E.readExport(state.exports[0].text)
-        : E.combineExports(state.exports.map(x => ({ text: x.text, label: x.label })));
+        : E.combineExports(state.exports.map(x => ({ text: x.text, label: x.label })), map);
+      if (exp.blocked) {
+        showStatus(exp.notes.map(n => ({ kind: 'warn', html: esc(n) })));
+        hideResults();
+        return;
+      }
       if (!exp.items.length || !exp.students.length) {
         notices.push({ kind: 'warn', html: '<b>The Canvas file could not be read as quiz results.</b><ul>' + (exp.notes.length ? exp.notes : ['No question columns were found.']).map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>Use the Student Analysis report from the quiz\'s Reports page.' });
         exp = null;
@@ -178,6 +196,7 @@
       matched = E.match(map, exp);
       const total = map.questions.length;
       const placed = matched.pairs.length;
+      if (matched.ambiguousItems.length) notices.push({ kind: 'warn', html: '<b>' + matched.ambiguousItems.length + ' question(s) have uncertain matches.</b> These are left out. Check the map\'s question wording and Canvas item IDs, or choose <b>Use Canvas results without this map</b> to analyze by question and make a new map.' });
       if (!placed) {
         notices.push({ kind: 'warn', html: head + '<b>None of the Canvas questions matched this map.</b> Check that the map is for the same test (' + esc(map.title) + ') as the Canvas file.' });
         showStatus(notices);
@@ -213,9 +232,23 @@
     }
     exp.notes.forEach(n => notices.push({ kind: 'ok', html: esc(n) }));
     model = { map, exp, matched };
-    // The Map Maker's questions always come from the Canvas file itself.
+    // Loaded maps can be edited as well. Preserve their keys and metadata.
     const fromCanvas = E.mapFromExport(exp, titleFromFile(state.exports[0].name));
-    model.draft = fromCanvas.map ? fromCanvas.map.questions : [];
+    model.draft = !map.keyless ? map.questions : fromCanvas.map ? fromCanvas.map.questions : [];
+    if (!map.keyless) {
+      const keys = makerKeys(model.draft);
+      model.draft.forEach((q, i) => {
+        if (!state.maker.tags[keys[i]]) state.maker.tags[keys[i]] = { topic: q.topic, lt: q.lt };
+      });
+      state.maker.name = state.maker.name || map.title;
+      state.maker.version = state.maker.version || map.version;
+      state.maker.replyTargets = { ...map.targets, ...state.maker.replyTargets };
+      if (!state.madeHere && !state.maker.seeded) {
+        state.maker.standards = Object.keys(map.targets).map(c => c + ': ' + map.targets[c]).join('\n');
+        $('maker-standards').value = state.maker.standards;
+        state.maker.seeded = true;
+      }
+    }
     model.defaultTitle = titleFromFile(state.exports[0].name);
     // Classes, for a department file holding several sections.
     const sections = [...new Set(exp.students.map(s => s.section).filter(Boolean))].sort();
@@ -280,6 +313,7 @@
     model.analysis = a;
     showStatus(model.baseNotices.concat(a.notes.map(n => ({ kind: 'warn', html: esc(n) }))));
     stats(a);
+    drawImport(a);
     $('results').hidden = false;
     $('anon-note').hidden = !state.anon;
     $('by').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === a.by)));
@@ -296,6 +330,21 @@
     drawMaker();
     // Widths through the style object: the page's lock refuses inline style attributes.
     $('results').querySelectorAll('[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+  }
+
+  function drawImport(a) {
+    const exp = model.exp;
+    const matched = model.matched;
+    const sources = [...new Set(a.students.filter(s => s.took).map(s => s.scoreSource))];
+    const sourcesText = sources.map(s => s === 'canvas' ? 'Canvas overall totals' : s === 'estimated' ? 'estimated item totals; confirm in Canvas' : 'analyzed item totals').join('; ');
+    const files = exp.files || [{ label: state.exports[0].label, students: exp.students.length, questions: exp.items.length, ok: true }];
+    $('import-summary').innerHTML = '<p class="small">' + exp.students.length + ' students in the files; ' + a.took + ' counted in this view. '
+      + matched.pairs.length + ' questions analyzed; ' + (exp.skippedItems || []).length + ' unsupported items skipped; '
+      + (matched.unmatchedQuestions || []).length + ' map questions unmatched. Score source: <b>' + esc(sourcesText || 'no scores') + '</b>.</p>'
+      + '<div class="scroller"><table><thead><tr><th scope="col">Class file</th><th scope="col">Students</th><th scope="col">Supported items</th></tr></thead><tbody>'
+      + files.map((f, i) => '<tr><td>' + esc(state.anon ? 'File ' + (i + 1) : f.label) + '</td><td>' + f.students + '</td><td>' + f.questions + (f.ok ? '' : ' (not read)') + '</td></tr>').join('') + '</tbody></table></div>'
+      + (exp.unknownTypes ? '<p class="small">Question type is missing for ' + exp.unknownTypes + ' items. Confirm they are single-answer multiple choice.</p>' : '')
+      + '<p class="small">Confirm the students, classes and question count against Canvas. Overall Canvas scores can include skipped or unmatched questions; those questions do not contribute to this analysis.</p>';
   }
 
   // The heat map: one row per student, one column per question, grouped under its
@@ -402,6 +451,7 @@
     const min = cov.min;
     const bits = ['<b>' + cov.tested + ' of ' + cov.rows.length + '</b> standard' + (cov.rows.length === 1 ? ' was' : 's were') + ' tested by at least ' + min + ' questions'];
     if (cov.thin) bits.push(cov.thin + ' had too few questions to judge');
+    if (cov.unmatched) bits.push(cov.unmatched + ' have missing imported questions and cannot be judged');
     if (cov.untested.length) bits.push(cov.untested.length + ' in your list ' + (cov.untested.length === 1 ? 'is' : 'are') + ' not on this test');
     let h = '<div class="report-head"><p class="muted small">Shown on multiple choice. A standard counts as tested when at least ' + min + ' questions assess it, and a student has shown it when every one of those questions is right. ' + bits.join('; ') + '.</p>'
       + '<button class="btn" type="button" id="download-standards">Download the standards (CSV)</button></div>';
@@ -409,7 +459,9 @@
     h += '<div class="scroller"><table class="report standards"><thead><tr><th scope="col">Standard</th><th scope="col">Questions</th><th scope="col">Students who showed it</th></tr></thead><tbody>'
       + cov.rows.map(r => {
         const judged = r.shown.length + r.notYet.length;
-        const cell = r.status === 'thin'
+        const cell = r.status === 'unmatched'
+          ? '<span class="muted">Missing imported questions: ' + esc(r.missing.join(', ')) + '. Check the map match before judging this standard.</span>'
+          : r.status === 'thin'
           ? '<span class="muted">Only ' + r.questions.length + ' question: too few to judge</span>'
           : '<div class="bar"><span class="track"><span class="fill band-' + band(r.pct) + '" data-w="' + (r.pct == null ? 0 : Math.round(r.pct * 100)) + '"></span></span><b>' + pct(r.pct) + '</b></div><span class="muted small">' + r.shown.length + ' of ' + judged + ' students' + (r.few.length ? '; ' + r.few.length + ' saw too few of its questions' : '') + '</span>';
         return '<tr' + (r.status === 'thin' ? ' class="thin"' : '') + '><td><b>' + esc(r.lt) + '</b>' + (r.text ? '<div class="wording">' + esc(r.text) + '</div>' : '') + '</td>'
@@ -430,7 +482,7 @@
         return '<tr><th scope="row" class="who">' + esc(who(s)) + '</th><td class="score num">' + c.shown + ' of ' + cov.tested + '</td>'
           + cov.rows.map(r => {
             const x = c.cells[r.lt];
-            const label = esc(who(s) + ', ' + r.lt + ': ' + (x === 'shown' ? 'shown' : x === 'notyet' ? 'not yet' : 'too few questions'));
+            const label = esc(who(s) + ', ' + r.lt + ': ' + (x === 'shown' ? 'shown' : x === 'notyet' ? 'not yet' : x === 'missing' ? 'missing imported questions' : 'too few questions'));
             return x === 'shown' ? '<td class="cell right" title="' + label + '">✓</td>' : x === 'notyet' ? '<td class="cell wrong" title="' + label + '">✗</td>' : '<td class="cell none" title="' + label + '"></td>';
           }).join('') + '</tr>';
       }).join('') + '</tbody></table></div>';
@@ -445,7 +497,8 @@
         const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank');
         const detail = missed.length ? '<details><summary>' + missed.length + ' missed</summary><ul class="misslist">' + missed.map(r => '<li><span class="mark ' + r.status + '">Q' + esc(r.q.n) + '</span> ' + (a.keyless ? '' : esc(a.by === 'topic' && r.q.topic ? 'Topic ' + r.q.topic + ', ' + r.q.lt : r.q.lt) + ': ')
           + (r.status === 'blank' ? 'left blank' : (state.anon ? hidden() : '<span class="answer">chose “' + esc(r.response) + '”</span>')) + '</li>').join('') + '</ul></details>' : '<span class="empty">none</span>';
-        return '<tr><td>' + esc(who(s)) + '</td>' + (state.anon ? '' : '<td>' + esc(s.section) + '</td>') + '<td class="num">' + s.earned + ' / ' + s.possible + '</td><td>'
+        return '<tr><td>' + esc(who(s)) + '</td>' + (state.anon ? '' : '<td>' + esc(s.section) + '</td>') + '<td class="num">' + s.earned + ' / ' + s.possible
+          + '<div class="muted small">' + (s.scoreSource === 'canvas' ? 'Canvas total' : s.scoreSource === 'estimated' ? 'estimated' : 'analyzed items') + '</div></td><td>'
           + (s.targetsMissed.length ? '<div class="chips">' + s.targetsMissed.map(e => '<span class="chip lt" title="missed ' + e.missed + ' of ' + e.of + '">' + esc(e.lt) + ' · ' + e.missed + '/' + e.of + '</span>').join('') + '</div>' : '<span class="empty">nothing to retake</span>')
           + '</td><td>' + detail + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<p class="empty">No student in this class has answers in the file.</p>';
@@ -471,11 +524,11 @@
     }
     const opts = { style: state.style, count: state.count };
     const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
-    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
-    if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
+    let h = '<p class="muted small intro sort-note">' + sortNote(a) + ' Prompts use only topics or targets that meet the selected retake rule.</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody meets the selected retake rule.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
       const text = E.retakePrompt(a, s, opts);
-      const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank').length;
+      const missed = s.targetsMissed.reduce((n, t) => n + t.missed, 0);
       return '<article class="prompt" data-student="' + esc(s.key) + '"><div class="target-head"><span class="lt">Student ' + s.n + (s.name && s.name !== 'Student ' + s.n ? ' · ' + esc(s.name) : '') + '</span><span class="muted small">' + missed + ' question' + (missed === 1 ? '' : 's') + ' missed'
         + (a.keyless ? '' : ' · ' + esc(s.targetsMissed.map(e => e.lt).join(', '))) + '</span></div>'
         + '<div class="row"><button class="btn primary copy-one" type="button">Copy prompt</button><details><summary>Show the prompt</summary><pre class="prompt-text" tabindex="0">' + esc(text) + '</pre></details></div></article>';
@@ -521,13 +574,14 @@
   function shorten(s, n) { const t = E.plain(s); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; }
 
   function drawMaker() {
-    const show = !!(model && model.draft && model.draft.length && (model.map.keyless || state.madeHere));
+    const show = !!(model && model.draft && model.draft.length);
     $('maker').hidden = !show;
     if (!show) return;
     $('maker-hidden').hidden = !state.anon;
     $('maker-body').hidden = state.anon;
     if (state.anon) return;
     if (!$('maker-name').value) $('maker-name').value = state.maker.name || model.defaultTitle;
+    if (!$('maker-version').value) $('maker-version').value = state.maker.version || '';
     makerCodes();
     const keys = makerKeys(model.draft);
     $('maker-table').innerHTML = '<div class="scroller"><table class="maker"><thead><tr><th scope="col">Q</th><th scope="col">Question</th><th scope="col">Correct answer</th><th scope="col">Topic</th><th scope="col">Standard or target</th></tr></thead><tbody>'
@@ -537,8 +591,7 @@
         const known = q.answer >= 0 && q.options[q.answer];
         return '<tr data-k="' + esc(k) + '"><td class="num">' + esc(q.n) + '</td>'
           + '<td class="q"><span class="answer" title="' + esc(E.plain(q.stem)) + '">' + esc(shorten(q.stem, 220)) + '</span></td>'
-          + '<td class="q">' + (known ? '<span class="answer">' + esc(shorten(q.options[q.answer], 140)) + '</span>'
-            : '<input class="text ans" type="text" aria-label="Correct answer for question ' + esc(q.n) + '" placeholder="Nobody chose it: type it (optional)" value="' + esc(state.maker.answers[k] || '') + '">') + '</td>'
+          + '<td class="q"><input class="text ans" type="text" aria-label="Correct answer for question ' + esc(q.n) + '" placeholder="Unknown: type it (optional)" value="' + esc(state.maker.answers[k] != null ? state.maker.answers[k] : known || '') + '"></td>'
           + '<td><input class="text topic" type="text" maxlength="40" aria-label="Topic for question ' + esc(q.n) + '" value="' + esc(t.topic || '') + '"></td>'
           + '<td><input class="text lt" type="text" maxlength="60" list="maker-codes" aria-label="Standard for question ' + esc(q.n) + '" value="' + esc(t.lt || '') + '"></td></tr>';
       }).join('') + '</tbody></table></div>';
@@ -554,6 +607,7 @@
   });
   $('maker-standards').addEventListener('input', e => { state.maker.standards = e.target.value; makerCodes(); });
   $('maker-name').addEventListener('input', e => { state.maker.name = e.target.value; });
+  $('maker-version').addEventListener('input', e => { state.maker.version = e.target.value; });
 
   $('maker-copy').addEventListener('click', () => {
     if (!model || !model.draft || state.anon) return;
@@ -604,7 +658,8 @@
     const targets = {};
     Object.keys(state.maker.replyTargets || {}).forEach(c => { if (used.has(c)) targets[c] = state.maker.replyTargets[c]; });
     Object.assign(targets, E.parseStandards(state.maker.standards).targets);
-    return E.buildMap({ title: $('maker-name').value.trim() || model.defaultTitle, questions: model.draft, tags, targets, answers });
+    return E.buildMap({ title: $('maker-name').value.trim() || model.defaultTitle, version: $('maker-version').value.trim(),
+      questions: model.draft, tags, targets, answers, topics: model.map.topics, subtitle: model.map.subtitle });
   }
   function makerReady() {
     if (!model || !model.draft) return null;
@@ -618,6 +673,7 @@
     state.mapText = JSON.stringify(map);
     state.mapName = map.title + ' (made in the Map Maker, not saved yet)';
     state.maker.name = map.title;
+    state.maker.version = map.version;
     state.madeHere = true;
     rebuild();
     makerStatus([{ kind: 'ok', html: 'The results above now use this map, grouped by topic. Choose <b>Save the map file</b> to use it again next time. Change anything in the table, then choose <b>Use this map</b> again.' }]);
@@ -670,6 +726,12 @@
   });
 
   $('filepick').addEventListener('change', e => { takeFiles(e.target.files); e.target.value = ''; });
+  $('remove-map').addEventListener('click', () => {
+    state.mapText = null; state.mapName = ''; state.madeHere = false;
+    state.maker = { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '', version: '' };
+    ['maker-standards', 'maker-reply', 'maker-name', 'maker-version'].forEach(id => { $(id).value = ''; });
+    rebuild();
+  });
   const drop = $('drop');
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
@@ -687,9 +749,9 @@
   });
   $('clear').addEventListener('click', () => {
     Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false, madeHere: false,
-      maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '' } });
+      maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '', version: '' } });
     model = null;
-    ['maker-standards', 'maker-reply', 'maker-name'].forEach(id => { $(id).value = ''; });
+    ['maker-standards', 'maker-reply', 'maker-name', 'maker-version'].forEach(id => { $(id).value = ''; });
     $('maker-status').innerHTML = '';
     $('maker-open').open = false;
     $('status').innerHTML = '';

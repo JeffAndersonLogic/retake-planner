@@ -227,7 +227,7 @@ ul.untested{margin:0 0 8px}
 textarea,input.text{font:inherit;font-size:13px;color:inherit;width:100%;border:1px solid var(--rule);border-radius:10px;background:var(--paper);padding:8px 10px}
 textarea{resize:vertical;min-height:84px;line-height:1.5}
 textarea:focus,input.text:focus{outline:2px solid var(--gold);outline-offset:1px;border-color:var(--steel)}
-#maker-name{max-width:360px;flex:1}
+#maker-name,#maker-version{max-width:360px;flex:1}
 code{font-size:12px;background:var(--inset);padding:1px 5px;border-radius:5px}
 table.maker td{vertical-align:top}
 table.maker td.q{min-width:220px;max-width:52ch}
@@ -235,6 +235,7 @@ table.maker input.text{min-width:96px;padding:6px 8px}
 
 /* printing: the view on screen, without the page's furniture */
 @media print{
+  .import-review{display:none!important}
   body{background:#fff;font-size:11px}
   .topbar,.hero,#load-title,.panel:not(#results),#status,.toolbar,nav.tabs,footer,.prompt-tools,.btn,#anon-note{display:none!important}
   .panel{border:0;box-shadow:none;padding:0}

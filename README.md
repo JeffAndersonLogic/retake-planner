@@ -8,6 +8,36 @@ It reads results. It does not grade. Canvas holds every grade.
 
 **Open it:** https://jeffandersonlogic.github.io/retake-planner/
 
+## Reliability update: 1.4.1
+
+This source version fixes the November 25 audit findings. A version on a working branch is
+not a deployed release: GitHub Pages serves `main`. See [RELEASES.md](RELEASES.md) for the
+validation and classroom-pilot checklist.
+
+- **Check this import** lists the students, class files, analyzed questions, unsupported items,
+  unmatched map questions, and score source before a teacher prepares retakes.
+- Matching uses Canvas item IDs when available, distinct wording, or distinctive answer choices.
+  Common choices such as Yes/No and question order cannot resolve an uncertain match. Unresolved
+  questions are left out with a warning. Remove the map to analyze Canvas's scored questions on
+  their own, or correct the map and reload it. Several files are aligned independently; overlapping
+  student IDs, incompatible question sets and uncertain alignment stop the combined analysis.
+- The selected **missed any / missed most** rule applies to the plan, counts, groups and both
+  individual and whole-class prompts, including test corrections. Prompts include only misses
+  within topics or targets that qualify under that rule.
+- Exported overall Canvas totals are shown as **Canvas total**, including any items outside the
+  analysis. Without usable totals, the page labels reconstructed scores as **analyzed items** or
+  **estimated**. Estimated maximums cannot establish a precise Canvas grade. The heat map and
+  standards remain based on matched, supported questions, independently of the overall score.
+- Known unsupported question types, including essays and multiple-answer items, are skipped.
+  Older exports without question types still work, with a request to confirm they are
+  single-answer multiple choice.
+- Map Maker edits loaded maps, answers and versions; retains authored metadata; and validates
+  every map before use or save. Universally blank items keep an unknown answer until a teacher
+  supplies it. New wrong choices from later classes remain in the distractor report.
+- Missing imported questions are distinguished from standards absent from the test. Downloaded
+  CSV text cells are protected against spreadsheet formulas. Malformed CSV quotes are refused;
+  normalization handles invalid entities, non-Latin text and mathematical comparisons.
+
 ## How a teacher uses it
 
 1. In Canvas, open the quiz (New Quizzes), choose **Reports**, then **Student Analysis**,
@@ -79,8 +109,8 @@ the class; Projector safe numbers the students.
 
 ### The Map Maker: a question map without writing one
 
-With only the Canvas file loaded, the **Map Maker** appears under the status. It makes the
-question map from the Canvas file itself, so no one writes JSON:
+The **Map Maker** appears under the status. It makes a question map from Canvas results, or
+edits a loaded map, so no one writes JSON:
 
 1. **Paste your standards** (optional), one per line with its code first: learning targets
    (`3.1 LT1: I can explain ...`), state standards, or College Board CED Key Concepts.
@@ -88,7 +118,8 @@ question map from the Canvas file itself, so no one writes JSON:
    tagging prompt**, paste it into the AI your school allows, and paste its reply back
    (`Q1 | 3.1 | 3.1 LT1`, one line per question). The reply fills in the table; the page names
    any question the reply left out and any code that is not in your list.
-3. **Use this map** groups the results by topic and standard at once. **Save the map file** keeps
+3. **Check or correct the answers** and optionally name a map version. **Use this map** groups
+   the results by topic and standard at once. **Save the map file** keeps
    it for the next class, the next year, or a colleague who gives the same test.
 
 The tagging prompt carries the test's questions, the answers students chose and the correct one;
@@ -140,10 +171,11 @@ use any labels: a learning target, a state standard, a CED topic. The best momen
 when the test is written: whoever writes the questions (a teacher, or an AI writing them from
 the course's standards) tags each one with its target and saves the map beside the test.
 
-How Canvas questions are matched to the map: by the answers students chose, since every answer
-choice is unique across a test. That survives Canvas shuffling the order and each teacher's own
-copy numbering questions differently. The page always says how many questions it matched and
-lists any it could not place.
+How Canvas questions are matched to the map: by stable `itemId` values when available, distinct
+question wording, or distinctive answer choices. That supports shuffled order and copied tests
+while refusing ties. The page always says how many questions matched and warns about questions
+it could not place. A complete authored map is more reliable than a map made from a few observed
+answer choices, especially when several questions have identical wording.
 
 ## What it handles, and what it does not yet
 
@@ -154,13 +186,14 @@ lists any it could not place.
   per student with a score column after each question, and one row per answer. When the file has
   no name column, students are shown by their row in the file.
 - **Sections:** the SectionNames column makes each section a class.
-- **Scores are in Canvas's points**, so a student reads 41 of 50 as Canvas shows it, even when the
-  question map counts questions differently.
+- **Exported overall scores are kept as Canvas totals.** Where the export lacks overall totals,
+  reconstructed item scores are labeled and estimates must be confirmed in Canvas.
 - **A file opened and saved in Excel** often comes back with its accents and curly quotes
   scrambled ("â€œ" for a quote). The reader repairs that and says so.
 - **Question titles do not come through.** Canvas puts each question's wording in the file, not its
   title, so a title such as "Question 1 (Topic 3.1)" cannot give the topic; the question map does.
-- **Single-answer multiple choice.** Questions with no points in the file are left out.
+- **Single-answer multiple choice.** Other known item types are skipped. Without a map, questions
+  with no points in the file are left out. A missing item type requires teacher confirmation.
 - When Canvas and the key disagree (a regraded question), Canvas's score wins and the count is
   shown. A blank answer counts as missed; a question a student never saw is left out.
 - Not yet: Google Forms and Classroom, Schoology, or a plain spreadsheet. Canvas comes first
@@ -169,13 +202,17 @@ lists any it could not place.
 ## Development
 
 ```bash
-npm test                # the engine and the no-maps guard; needs only Node
-npm i --no-save playwright-core
+npm test                # engine, reliability regressions and the no-maps guard; needs only Node
+npm ci                  # pinned browser-test dependency from package-lock.json
+npx --no-install playwright-core install chromium
 npm run test:browser    # the page in Chromium
 ```
 
 Publishing: GitHub Pages serves `main` from the repository root (Settings, Pages, Deploy from a
 branch, `main`, `/ (root)`). Every push runs both test jobs in `.github/workflows/validate.yml`.
+Validate a working branch before merging it: branch-based Pages publishing is independent of
+the validation jobs. The public-data guard helps catch mistakes but cannot retract data already
+pushed to a public repository or detect every possible representation of a key.
 
 Fonts: Manrope and Inter, under the SIL Open Font License (licences in `assets/fonts/andersonlogic/`).
 The ANDERSON*LOGIC* ai logo is a trademark of ANDERSON*LOGIC* ai and is not licensed for reuse.
