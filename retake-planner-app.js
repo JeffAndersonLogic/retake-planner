@@ -12,6 +12,7 @@
 (function () {
   'use strict';
   const E = window.BHRetakePlanner;
+  const P = window.RetakePackets;
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pct = x => (x == null ? 'n/a' : Math.round(x * 100) + '%');
@@ -26,6 +27,7 @@
     maker: { tags: {}, answers: {}, standards: '', replyTargets: {}, name: '', version: '' }, madeHere: false
   };
   let model = null; // { map, exp, matched, analysis }
+  let packets = { request: null, draft: null, approved: new Set(), message: '', problems: [] };
 
   /* ── demo: invented questions, invented students ──────────────────────── */
   // Placeholder questions only. Nothing here comes from a real test.
@@ -139,7 +141,7 @@
   function showStatus(items) {
     $('status').innerHTML = items.map(i => '<div class="notice ' + i.kind + '">' + i.html + '</div>').join('');
   }
-  function hideResults() { $('results').hidden = true; $('maker').hidden = true; stats(null); }
+  function hideResults() { $('results').hidden = true; $('maker').hidden = true; resetPackets(''); stats(null); }
   // "Era 2 Exam Student Analysis Report.csv" names the test well enough for a prompt.
   function titleFromFile(name) {
     const t = String(name || '').replace(/\.[a-z]+$/i, '').replace(/[_]+/g, ' ').replace(/\s*student analysis( report)?\s*/i, ' ').trim();
@@ -326,6 +328,7 @@
     drawStudents(a);
     drawQuestions(a);
     drawPrompts(a);
+    drawPackets(a);
     drawGroups(a);
     drawMaker();
     // Widths through the style object: the page's lock refuses inline style attributes.
@@ -524,7 +527,7 @@
     }
     const opts = { style: state.style, count: state.count };
     const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
-    let h = '<p class="muted small intro sort-note">' + sortNote(a) + ' Prompts use only topics or targets that meet the selected retake rule.</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    let h = '<p class="muted small intro sort-note">' + sortNote(a) + ' Prompts use only topics or targets that meet the selected retake rule.</p><p class="small">For replies you can import and print, use the <b>Student packets</b> tab and its packet prompt.</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
     if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody meets the selected retake rule.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
       const text = E.retakePrompt(a, s, opts);
@@ -539,6 +542,168 @@
       copyText(pre.textContent, btn, pre);
     }));
   }
+
+  /* Packet requests and reviews live only in this tab. Approvals never survive edits
+   * or a changed analysis; student documents are built separately from teacher keys. */
+  function resetPackets(message) {
+    packets = { request: null, draft: null, approved: new Set(), message: message || '', problems: [] };
+    $('packet-reply').value = '';
+    $('packet-prompt').textContent = '';
+    $('packet-review').innerHTML = '';
+    $('packet-print-root').innerHTML = '';
+    $('packet-print-root').hidden = true;
+    document.body.classList.remove('packet-print');
+  }
+  function packetOptions() {
+    return { style: state.style, count: state.count, grade: $('packet-grade').value, course: $('packet-course').value };
+  }
+  function packetCurrent() {
+    return !!(model && model.analysis && packets.request && packets.request.signature === P.context(model.analysis, packetOptions()));
+  }
+  function packetStatus() {
+    $('packet-status').innerHTML = packets.problems.length
+      ? '<div class="notice warn"><b>Check the reply:</b><ul>' + packets.problems.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul></div>'
+      : packets.message ? '<div class="notice ok">' + esc(packets.message) + '</div>' : '';
+  }
+  function packetActions() {
+    const valid = packetCurrent() && packets.draft && !packets.problems.length && !P.validateReply(packets.draft, packets.request).problems.length;
+    const count = packets.approved.size;
+    for (const id of ['packet-print-students', 'packet-print-key', 'packet-save-students', 'packet-save-key']) $(id).disabled = state.anon || !valid || !count;
+    $('packet-approved-count').textContent = count ? count + ' packet' + (count === 1 ? '' : 's') + ' approved. Only these students will be included.' : 'No packets approved.';
+    $('packet-import').disabled = state.anon || !packetCurrent();
+    $('packet-demo').hidden = !state.demo;
+    $('packet-demo').disabled = state.anon || !packetCurrent();
+  }
+  function drawPackets(a) {
+    if (packets.request && packets.request.signature !== P.context(a, packetOptions())) resetPackets('Results, class, rule or prompt settings changed. Copy a new packet prompt and import its reply; previous approvals were cleared.');
+    $('packet-private').hidden = !state.anon;
+    $('packet-body').hidden = state.anon;
+    $('packet-style').value = state.style;
+    $('packet-count').value = String(state.count);
+    $('packet-count-wrap').hidden = state.style === 'corrections';
+    const oldBatch = $('packet-batch').value;
+    const students = P.eligible(a);
+    const batches = [];
+    const batchSize = Number($('packet-batch-size').value);
+    for (let i = 0; i < students.length; i += batchSize) batches.push(students.slice(i, i + batchSize).map(s => s.n));
+    $('packet-batch').innerHTML = batches.map((ns, i) => '<option value="' + ns.join(',') + '">Batch ' + (i + 1) + ': students ' + ns.join(', ') + '</option>').join('');
+    if (batches.some(ns => ns.join(',') === oldBatch)) $('packet-batch').value = oldBatch;
+    $('packet-batch').disabled = !!packets.request;
+    $('packet-batch-size').disabled = !!packets.request;
+    $('packet-new').hidden = !packets.request;
+    $('packet-copy').disabled = !students.length || state.anon;
+    $('packet-prompt').textContent = state.anon ? '' : packets.request ? packets.request.prompt : '';
+    if (state.anon) {
+      $('packet-review').innerHTML = '';
+      $('packet-reply').value = ''; // the parsed draft stays local, but hidden raw text is removed
+      $('packet-print-root').innerHTML = '';
+    } else drawPacketReview();
+    packetStatus();
+    packetActions();
+  }
+  function drawPacketReview() {
+    if (!packets.draft || !packets.request) { $('packet-review').innerHTML = '<p class="empty">Import a complete reply to review the draft packets.</p>'; return; }
+    $('packet-review').innerHTML = packets.draft.students.map(st => {
+      const person = packets.request.students.find(s => s.student === st.student);
+      return '<article class="packet-card" data-student="' + st.student + '"><h3>Student ' + st.student + ' · ' + esc(person.name) + '</h3>'
+        + '<p class="muted small">Qualifying original questions: ' + esc(person.sources.map(s => s.n).join(', ')) + '</p>'
+        + st.questions.map((q, i) => '<fieldset class="packet-question-edit" data-index="' + i + '"><legend>Question ' + (i + 1) + '</legend>'
+          + '<label>Student-facing question<textarea data-field="question" rows="3" maxlength="6000">' + esc(q.question) + '</textarea></label>'
+          + '<div class="row"><label>Original missed question numbers<input class="text" data-field="sourceQuestions" value="' + esc(q.sourceQuestions.join(', ')) + '"></label>'
+          + '<label>Points<input class="text" data-field="points" type="number" min="1" max="20" step="1" value="' + q.points + '"></label></div>'
+          + '<details><summary>Teacher answer and scoring guidance</summary><label>Expected evidence and reasoning (one item per line)<textarea data-field="teacherGuidance" rows="3" maxlength="16000">' + esc(q.teacherGuidance.join('\n')) + '</textarea></label>'
+          + '<label>Scoring guidance<textarea data-field="rubric" rows="2" maxlength="4000">' + esc(q.rubric) + '</textarea></label></details></fieldset>').join('')
+        + '<label class="packet-approval"><input type="checkbox" data-approve="' + st.student + '"' + (packets.approved.has(st.student) ? ' checked' : '') + '> I reviewed this packet for accuracy, alignment and student-facing wording. Approve it for students.</label></article>';
+    }).join('');
+  }
+  $('packet-copy').addEventListener('click', () => {
+    if (!model || state.anon) return;
+    if (packetCurrent()) { copyText(packets.request.prompt, $('packet-copy'), $('packet-prompt')); return; }
+    const numbers = $('packet-batch').value.split(',').map(Number);
+    const requestId = crypto.randomUUID();
+    resetPackets('Packet prompt prepared. Paste it into Raina, then bring the complete reply back to this tab.');
+    packets.request = P.createRequest(model.analysis, packetOptions(), requestId, numbers);
+    drawPackets(model.analysis);
+    copyText(packets.request.prompt, $('packet-copy'), $('packet-prompt'));
+  });
+  $('packet-import').addEventListener('click', () => {
+    if (state.anon || !packetCurrent()) return;
+    const parsed = P.parseReply($('packet-reply').value, packets.request);
+    packets.approved.clear();
+    if (parsed.draft) packets.draft = parsed.draft;
+    packets.problems = parsed.problems;
+    if (!parsed.draft && packets.draft) packets.problems.push('The new reply was not imported. The previous draft is retained, with approvals cleared.');
+    packets.message = parsed.draft ? 'Reply checked. These are unapproved drafts. Review every question and approve each packet before printing.' : '';
+    drawPacketReview(); packetStatus(); packetActions();
+  });
+  $('packet-demo').addEventListener('click', () => {
+    if (!state.demo || state.anon || !packetCurrent()) return;
+    const r = packets.request;
+    const reply = { format: P.FORMAT, requestId: r.id, students: r.students.map(s => ({ student: s.student,
+      questions: Array.from({ length: s.expected }, (_, i) => ({ id: 'S' + s.student + '-Q' + (i + 1),
+        sourceQuestions: r.options.style === 'corrections' ? [s.sources[i].n] : s.sources.map(q => q.n),
+        question: 'Demo question ' + (i + 1) + ': explain an invented example of this idea and use two specific details to support your reasoning. This is a workflow example, not a classroom assessment.',
+        teacherGuidance: ['Invented example only: look for relevant evidence.', 'Invented example only: look for a clear explanation.'],
+        rubric: 'Demo rubric: up to two points for evidence and two for reasoning. Replace with subject-specific guidance before real use.', points: 4 })) })) };
+    $('packet-reply').value = JSON.stringify(reply, null, 2);
+    $('packet-import').click();
+  });
+  $('packet-review').addEventListener('input', e => {
+    const field = e.target.dataset.field;
+    if (!field || !packets.draft || state.anon || !packetCurrent()) return;
+    const card = e.target.closest('[data-student]');
+    const student = Number(card.dataset.student);
+    const q = packets.draft.students.find(s => s.student === student).questions[Number(e.target.closest('[data-index]').dataset.index)];
+    q[field] = field === 'points' ? Number(e.target.value) : field === 'sourceQuestions' ? e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+      : field === 'teacherGuidance' ? e.target.value.split('\n').map(s => s.trim()).filter(Boolean) : e.target.value;
+    packets.approved.delete(student);
+    card.querySelector('[data-approve]').checked = false;
+    packets.problems = P.validateReply(packets.draft, packets.request).problems;
+    packets.message = 'Edited. Review and approve this packet again before printing.';
+    packetStatus(); packetActions();
+  });
+  $('packet-review').addEventListener('change', e => {
+    if (!e.target.matches('[data-approve]') || state.anon || !packetCurrent()) return;
+    packets.problems = P.validateReply(packets.draft, packets.request).problems;
+    const n = Number(e.target.dataset.approve);
+    if (e.target.checked && !packets.problems.length) packets.approved.add(n);
+    else { packets.approved.delete(n); e.target.checked = false; }
+    packetStatus(); packetActions();
+  });
+  $('packet-instructions').addEventListener('input', () => {
+    packets.approved.clear();
+    $('packet-review').querySelectorAll('[data-approve]').forEach(c => { c.checked = false; });
+    packets.message = 'Directions changed. Review and approve the packets again.';
+    packetStatus(); packetActions();
+  });
+  for (const id of ['packet-grade', 'packet-course']) $(id).addEventListener('input', () => { if (model) drawPackets(model.analysis); });
+  for (const id of ['packet-batch', 'packet-batch-size']) $(id).addEventListener('change', () => { resetPackets('Batch changed. Copy a new packet prompt for this batch.'); if (model) drawPackets(model.analysis); });
+  $('packet-new').addEventListener('click', () => { resetPackets('Previous batch discarded. Choose your next batch and copy its packet prompt.'); if (model) drawPackets(model.analysis); });
+  $('packet-style').addEventListener('change', e => {
+    state.style = e.target.value;
+    $('style').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === state.style)));
+    draw();
+  });
+  $('packet-count').addEventListener('change', e => { state.count = Number(e.target.value); $('count').value = String(state.count); draw(); });
+  function exportPackets(mode, saveFile) {
+    if (state.anon || !packetCurrent() || !packets.draft || packets.problems.length) return;
+    let doc;
+    try { doc = P.documentFor(packets.request, packets.draft, [...packets.approved], { mode, lines: $('packet-lines').value, instructions: $('packet-instructions').value }); }
+    catch (e) { packets.problems = [e.message]; packetStatus(); return; }
+    if (saveFile) download(doc.html, fileStem(packets.request.title) + (mode === 'teacher' ? '-Teacher-Key.html' : '-Student-Packets.html'), 'text/html;charset=utf-8');
+    else {
+      $('packet-print-root').innerHTML = doc.body;
+      $('packet-print-root').hidden = false;
+      document.body.classList.add('packet-print');
+      try { window.print(); } catch (e) { clearPacketPrint(); packets.problems = ['The print dialog could not open. Download the printable packet file instead.']; packetStatus(); }
+    }
+  }
+  function clearPacketPrint() { document.body.classList.remove('packet-print'); $('packet-print-root').innerHTML = ''; $('packet-print-root').hidden = true; }
+  window.addEventListener('afterprint', clearPacketPrint);
+  $('packet-print-students').addEventListener('click', () => exportPackets('student', false));
+  $('packet-print-key').addEventListener('click', () => exportPackets('teacher', false));
+  $('packet-save-students').addEventListener('click', () => exportPackets('student', true));
+  $('packet-save-key').addEventListener('click', () => exportPackets('teacher', true));
 
   function drawGroups(a) {
     const byKey = new Map(a.students.map(s => [s.key, s]));
@@ -704,9 +869,10 @@
   $('section').addEventListener('change', e => { state.section = e.target.value; draw(); });
   $('count').addEventListener('change', e => { state.count = Number(e.target.value) || 3; draw(); });
 
-  const TABS = ['heat', 'targets', 'standards', 'students', 'questions', 'prompts', 'groups'];
+  const TABS = ['heat', 'targets', 'standards', 'students', 'questions', 'prompts', 'packets', 'groups'];
   function selectTab(name, focus) {
     state.tab = name;
+    $('print').disabled = name === 'packets';
     TABS.forEach(t => {
       const on = t === name;
       $('tab-' + t).setAttribute('aria-selected', String(on));
@@ -809,7 +975,7 @@
     if (!model || !model.analysis) return;
     save(E.planCsv(model.analysis, { anon: state.anon }), '-Retake-Plan.csv');
   });
-  $('print').addEventListener('click', () => window.print());
+  $('print').addEventListener('click', () => { if (state.tab !== 'packets') window.print(); });
 
   fileState();
 })();

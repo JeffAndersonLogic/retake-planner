@@ -576,14 +576,14 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   await check('the page asks for this version\'s own script and styles, so a browser cannot keep last version\'s', async () => {
     const version = require(path.join(ROOT, 'package.json')).version;
     const asked = requests.map(u => u.replace(origin, '')).filter(u => /retake-planner[-.a-z]*\.(js|css)/.test(u));
-    ['/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js'].forEach(f => {
+    ['/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-packets.js', '/retake-planner-app.js'].forEach(f => {
       assert(asked.includes(f + '?v=' + version), f + ' was not asked for as version ' + version + ': ' + asked.join(', '));
     });
     assert(await page.evaluate(() => window.BHRetakePlanner.VERSION) === 'retake-planner/' + version, 'the engine says a different version');
   });
 
   await check('the page reaches nothing but its own files, brand fonts and logo', async () => {
-    const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js',
+    const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-packets.js', '/retake-planner-app.js',
       '/assets/fonts/andersonlogic/manrope-latin-var.woff2', '/assets/fonts/andersonlogic/inter-latin-var.woff2',
       '/assets/images/brand/andersonlogic/al-logo-mark.png', '/assets/images/brand/andersonlogic/al-logo-wordmark.png',
       '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png']);
@@ -630,7 +630,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await phone.goto(origin + '/index.html', { waitUntil: 'load' });
     await phone.click('#demo');
     await phone.waitForSelector('#results:not([hidden])');
-    for (const tab of ['targets', 'standards', 'students', 'questions']) {
+    for (const tab of ['targets', 'standards', 'students', 'questions', 'packets']) {
       await phone.click('#tab-' + tab);
       const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert(over <= 1, tab + ' scrolls sideways by ' + over + 'px');

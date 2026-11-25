@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<!-- This page reaches nothing. It loads its own stylesheet, two scripts, two brand fonts
+<!-- This page reaches nothing. It loads its own stylesheet, three scripts, two brand fonts
      and the ANDERSONLOGIC ai logo files, all from this site, and makes no other request: no
      analytics, no AI service, no database. The Canvas file and the question map are read inside this tab and are gone when it closes.
      The retake prompts are only text to copy: the teacher pastes them into their own AI.
@@ -11,7 +11,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <title>Retake Planner | ANDERSONLOGIC ai</title>
-<link rel="stylesheet" href="retake-planner.css?v=1.4.1">
+<link rel="stylesheet" href="retake-planner.css?v=1.6.0">
 <link rel="icon" type="image/png" href="assets/images/brand/andersonlogic/al-favicon.png">
 </head>
 <body>
@@ -133,6 +133,7 @@
         <button type="button" role="tab" id="tab-students" aria-controls="view-students" aria-selected="false" tabindex="-1">By student</button>
         <button type="button" role="tab" id="tab-questions" aria-controls="view-questions" aria-selected="false" tabindex="-1">By question</button>
         <button type="button" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1">Retake questions</button>
+        <button type="button" role="tab" id="tab-packets" aria-controls="view-packets" aria-selected="false" tabindex="-1">Student packets</button>
         <button type="button" role="tab" id="tab-groups" aria-controls="view-groups" aria-selected="false" tabindex="-1">Same retake</button>
       </nav>
       <div role="tabpanel" id="view-heat" aria-labelledby="tab-heat"></div>
@@ -149,13 +150,55 @@
         <div id="prompt-list"></div>
       </div>
       <div role="tabpanel" id="view-groups" aria-labelledby="tab-groups" hidden></div>
+      <div role="tabpanel" id="view-packets" aria-labelledby="tab-packets" hidden>
+        <p id="packet-private" class="empty" hidden>Packets and AI replies are hidden on the projector. Turn Projector safe off to review or print them.</p>
+        <div id="packet-body" class="stack">
+          <p class="muted small">Prepare a small batch in MagicSchool's Raina or your approved AI, paste its reply here, then edit and approve each packet. Student names stay here. Nothing is sent automatically, and imported drafts are not ready for students until you review them.</p>
+          <div class="packet-settings row">
+            <label>Write<select class="sel" id="packet-style"><option value="retake">New retake questions</option><option value="corrections">Test corrections</option></select></label>
+            <label id="packet-count-wrap">Questions per student<select class="sel" id="packet-count"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
+            <label>Grade or reading level<input class="text" id="packet-grade" maxlength="80" placeholder="For example, 9th grade"></label>
+            <label>Course<input class="text" id="packet-course" maxlength="80" placeholder="For example, AP World History"></label>
+          </div>
+          <section class="packet-step" aria-labelledby="packet-step-1">
+            <h3 id="packet-step-1">1. Copy a packet prompt</h3>
+            <p class="muted small">Each batch contains up to five eligible students. Copy a new prompt for each batch. Keep this tab open while the AI writes its reply.</p>
+            <div class="row"><label for="packet-batch-size">Students per batch</label><select class="sel" id="packet-batch-size"><option>1</option><option>3</option><option selected>5</option></select><label for="packet-batch">Batch</label><select class="sel" id="packet-batch"></select><button class="btn primary" id="packet-copy" type="button">Copy packet prompt for Raina</button><a class="btn" href="https://app.magicschool.ai/" target="_blank" rel="noopener noreferrer">Open MagicSchool</a><button class="btn" id="packet-new" type="button" hidden>Discard current draft / start another batch</button></div>
+            <p class="muted small">Print or download the approved batch before starting another. Copying the current prompt again keeps your draft. Nothing is saved when this tab closes.</p>
+            <details><summary>Show the current packet prompt</summary><pre id="packet-prompt" class="prompt-text" tabindex="0"></pre></details>
+          </section>
+          <section class="packet-step" aria-labelledby="packet-step-2">
+            <h3 id="packet-step-2">2. Paste the complete AI reply</h3>
+            <label class="small" for="packet-reply">Use the reply to the packet prompt above. Copy the entire reply, including its opening and closing braces.</label>
+            <textarea id="packet-reply" rows="6" spellcheck="false" placeholder="Paste Raina's complete packet reply here"></textarea>
+            <div class="row"><button class="btn" id="packet-import" type="button" disabled>Check and import reply</button><button class="btn" id="packet-demo" type="button" hidden disabled>Try an invented reply (demo only)</button></div>
+          </section>
+          <div id="packet-status" role="status" class="stack"></div>
+          <section class="packet-step" aria-labelledby="packet-step-3">
+            <h3 id="packet-step-3">3. Review and approve</h3>
+            <p class="muted small">Check accuracy, reading level, alignment and whether the question can be answered without the original test. Remove any answer hints or teacher notes from student-facing questions. Changes remove that packet's approval.</p>
+            <label class="small" for="packet-instructions">Directions for student packets</label>
+            <textarea id="packet-instructions" rows="2">Answer in complete sentences. Use specific evidence and explain your reasoning.</textarea>
+            <div id="packet-review"></div>
+          </section>
+          <section class="packet-step" aria-labelledby="packet-step-4">
+            <h3 id="packet-step-4">4. Print approved packets</h3>
+            <p class="muted small" id="packet-approved-count">No packets approved.</p>
+            <label>Writing lines per question<select class="sel" id="packet-lines"><option>3</option><option selected>6</option><option>10</option><option>16</option></select></label>
+            <div class="row packet-actions"><button class="btn primary" type="button" id="packet-print-students" disabled>Print student packets</button><button class="btn" type="button" id="packet-print-key" disabled>Print teacher key</button><button class="btn" type="button" id="packet-save-students" disabled>Download student packets</button><button class="btn" type="button" id="packet-save-key" disabled>Download teacher key</button></div>
+            <p class="muted small">Print can save a PDF through your browser. Downloads are private, printable HTML files with no scripts. Student packets contain questions and writing space; the separate teacher key contains answers and scoring guidance. This page does not grade work. Use these packet buttons instead of printing the review screen.</p>
+          </section>
+        </div>
+      </div>
     </section>
   </div>
 </main>
 <footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself.</div></footer>
 <!-- ?v= is the version (package.json): a browser that kept the last version's script for its ten
      minutes would otherwise run old code under new buttons (2026-11-24). test/page.test.js checks it. -->
-<script src="retake-planner-engine.js?v=1.4.1"></script>
-<script src="retake-planner-app.js?v=1.4.1"></script>
+<div id="packet-print-root" hidden></div>
+<script src="retake-planner-engine.js?v=1.6.0"></script>
+<script src="retake-planner-packets.js?v=1.6.0"></script>
+<script src="retake-planner-app.js?v=1.6.0"></script>
 </body>
 </html>

@@ -20,6 +20,11 @@ AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository hold
 - **A retake prompt never carries a student's name or id**, only "Student N". The page writes the
   prompt; the teacher pastes it into their own AI. The page never contacts an AI.
 - **Projector safe also hides the retake prompts**: they hold the test's questions and answers.
+- **Packets:** AI replies must match the active request and local roster. Names and IDs never
+  enter a packet prompt. Drafts require explicit teacher approval; content edits remove approval
+  and changed analysis/settings invalidate the request. Student print/download documents must
+  exclude teacher guidance and rubrics. Projector safe hides reply/review content and disables
+  packet exports. No real packet, key, Canvas export or AI reply is ever committed here.
 - **The Map Maker's tagging prompt carries the test's questions and nothing about any student**,
   and Projector safe hides the Map Maker. A map it saves is an answer key like any other.
 - **Standards (Jeff, 2026-11-25):** a standard is tested when at least 2 questions assess it

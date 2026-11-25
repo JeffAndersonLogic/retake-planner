@@ -42,9 +42,42 @@ session or the repository.
 ### Subsequent product work
 
 After local validation, pilot across a small range of teachers, subjects and test structures.
-The next feature milestone is a structured AI-reply import with teacher editing and separate
-student packets and teacher keys. Additional LMS importers require representative validated
-fixtures. Neither feature is implemented or claimed complete by this reliability update.
+The follow-up to 1.4.1 is the structured AI-reply and packet workflow described under 1.6.0 below.
+Additional LMS importers still require representative validated fixtures.
 
 Broader distribution, licensing, support and pricing remain product decisions. Their private
 strategy belongs in AndersonLogic-OS; this file records technical release requirements only.
+
+## 1.6.0: reviewed AI replies and student-ready packets
+
+Adds a Student packets workflow on top of 1.4.1. Teachers copy a structured packet prompt to
+Raina or another approved AI, paste the reply back, edit questions and teacher guidance, approve
+individual packets, and print/download student documents separately from teacher keys. Batches
+of 1, 3 or 5 bound the reply size. No automatic AI connection or grading was added.
+
+### Verification
+
+- Packet unit checks cover identity exclusion, request matching, completeness, counts, duplicate
+  questions, permitted source questions and target coverage, correction scope, required answer
+  guidance and rubrics, point limits, malformed replies, approval requirements, HTML escaping
+  and student/key separation.
+- Browser checks exercise copy/paste round trips, invalid and stale replies, review/editing,
+  explicit approvals, print isolation and cleanup, HTML downloads, projector privacy, stale
+  context invalidation, batch changes, corrections, small-screen layout and CSP/network checks.
+- Tests use invented records and invented AI responses. They do not establish Raina's real
+  adherence to the return format or the educational quality of generated questions.
+- The source and exact-commit GitHub checks must pass before release. Publishing and real-export
+  classroom validation remain separate gates from building the feature.
+
+### Local pilot additions
+
+1. Use a small real export locally. Copy a one-student packet prompt to the teacher-approved AI
+   and verify that its full reply imports. If cut off, reduce the batch or question count.
+2. Check source alignment, historical accuracy, reading level, independent answerability, and
+   that student-facing prose contains no answer hints or teacher notes. Edit before approving.
+3. Print one student packet and its key. Verify names, writing space, page breaks and that the
+   student version contains no teacher guidance. Test the browser's Save as PDF on the actual
+   classroom device and printer.
+4. Reuse a prompt, change a rule/class, and start a new batch. Verify that old responses cannot
+   be assigned to a new roster and that edits/settings changes remove outdated approvals.
+5. Keep private packets and keys off student-shared drives and out of the public repository.
