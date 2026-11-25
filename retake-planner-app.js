@@ -288,6 +288,7 @@
     $('sort').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === sortUsed(a))));
     drawHeat(a);
     drawReport(a);
+    drawStandards(a);
     drawStudents(a);
     drawQuestions(a);
     drawPrompts(a);
@@ -386,6 +387,55 @@
     if (!rows.some(t => t.needCount)) h += '<p class="empty">Nobody needs a retake.</p>';
     $('view-targets').innerHTML = h;
     $('download-report').addEventListener('click', () => save(E.reportCsv(a, { anon: state.anon }), '-Class-Report.csv'));
+  }
+
+  // Standards (Jeff, 2026-11-25): which standards this test showed, for the class and for
+  // each student. Tested means at least two questions; shown means all of them right.
+  // Always by standard, whatever "Group by" says, and only with a question map.
+  function drawStandards(a) {
+    const v = $('view-standards');
+    if (a.keyless) {
+      v.innerHTML = '<p class="empty">Standards need a question map, which says what standard each question assesses. Make one in the Map Maker above, or drop in the test\'s map.</p>';
+      return;
+    }
+    const cov = E.coverage(model.map, a);
+    const min = cov.min;
+    const bits = ['<b>' + cov.tested + ' of ' + cov.rows.length + '</b> standard' + (cov.rows.length === 1 ? ' was' : 's were') + ' tested by at least ' + min + ' questions'];
+    if (cov.thin) bits.push(cov.thin + ' had too few questions to judge');
+    if (cov.untested.length) bits.push(cov.untested.length + ' in your list ' + (cov.untested.length === 1 ? 'is' : 'are') + ' not on this test');
+    let h = '<div class="report-head"><p class="muted small">Shown on multiple choice. A standard counts as tested when at least ' + min + ' questions assess it, and a student has shown it when every one of those questions is right. ' + bits.join('; ') + '.</p>'
+      + '<button class="btn" type="button" id="download-standards">Download the standards (CSV)</button></div>';
+    // The class: each standard in course order.
+    h += '<div class="scroller"><table class="report standards"><thead><tr><th scope="col">Standard</th><th scope="col">Questions</th><th scope="col">Students who showed it</th></tr></thead><tbody>'
+      + cov.rows.map(r => {
+        const judged = r.shown.length + r.notYet.length;
+        const cell = r.status === 'thin'
+          ? '<span class="muted">Only ' + r.questions.length + ' question: too few to judge</span>'
+          : '<div class="bar"><span class="track"><span class="fill band-' + band(r.pct) + '" data-w="' + (r.pct == null ? 0 : Math.round(r.pct * 100)) + '"></span></span><b>' + pct(r.pct) + '</b></div><span class="muted small">' + r.shown.length + ' of ' + judged + ' students' + (r.few.length ? '; ' + r.few.length + ' saw too few of its questions' : '') + '</span>';
+        return '<tr' + (r.status === 'thin' ? ' class="thin"' : '') + '><td><b>' + esc(r.lt) + '</b>' + (r.text ? '<div class="wording">' + esc(r.text) + '</div>' : '') + '</td>'
+          + '<td class="num">' + esc(r.questions.join(', ')) + '</td><td>' + cell + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    if (cov.untested.length) {
+      h += '<h3 class="sub">Not on this test</h3><p class="muted small intro">In your list of standards, but no question assessed ' + (cov.untested.length === 1 ? 'it' : 'them') + '.</p><ul class="within untested">'
+        + cov.untested.map(r => '<li><b>' + esc(r.lt) + '</b> ' + esc(r.text) + '</li>').join('') + '</ul>';
+    }
+    // Each student: one square per standard.
+    const byKey = new Map(cov.students.map(s => [s.key, s]));
+    h += '<h3 class="sub">Each student</h3><p class="muted small intro"><span class="key right" aria-hidden="true">✓</span> shown (every question right), <span class="key wrong" aria-hidden="true">✗</span> not yet, blank: too few questions to judge. <span class="sort-note">' + sortNote(a) + '</span></p>'
+      + '<div class="scroller heat-scroll"><table class="heat standards-grid"><thead><tr><th scope="col" class="who">Student</th><th scope="col" class="score">Shown</th>'
+      + cov.rows.map(r => '<th scope="col" class="qn std' + (r.status === 'thin' ? ' thin' : '') + '" title="' + esc(r.lt + (r.text ? ': ' + r.text : '')) + '">' + esc(r.lt) + '</th>').join('') + '</tr></thead><tbody>'
+      + ordered(a).map(s => {
+        const c = byKey.get(s.key);
+        if (!c) return '';
+        return '<tr><th scope="row" class="who">' + esc(who(s)) + '</th><td class="score num">' + c.shown + ' of ' + cov.tested + '</td>'
+          + cov.rows.map(r => {
+            const x = c.cells[r.lt];
+            const label = esc(who(s) + ', ' + r.lt + ': ' + (x === 'shown' ? 'shown' : x === 'notyet' ? 'not yet' : 'too few questions'));
+            return x === 'shown' ? '<td class="cell right" title="' + label + '">✓</td>' : x === 'notyet' ? '<td class="cell wrong" title="' + label + '">✗</td>' : '<td class="cell none" title="' + label + '"></td>';
+          }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>';
+    v.innerHTML = h;
+    $('download-standards').addEventListener('click', () => save(E.coverageCsv(cov, a, { anon: state.anon }), '-Standards.csv'));
   }
 
   function drawStudents(a) {
@@ -598,7 +648,7 @@
   $('section').addEventListener('change', e => { state.section = e.target.value; draw(); });
   $('count').addEventListener('change', e => { state.count = Number(e.target.value) || 3; draw(); });
 
-  const TABS = ['heat', 'targets', 'students', 'questions', 'prompts', 'groups'];
+  const TABS = ['heat', 'targets', 'standards', 'students', 'questions', 'prompts', 'groups'];
   function selectTab(name, focus) {
     state.tab = name;
     TABS.forEach(t => {

@@ -14,12 +14,14 @@ It reads results. It does not grade. Canvas holds every grade.
    generate it and choose **Export CSV**.
 2. Open the Retake Planner and drop in that file. Add the test's **question map** too if you
    have one (see below); it is optional, and the **Map Maker** makes one from the Canvas file.
-3. Read the results six ways:
+3. Read the results seven ways:
    - **Heat map:** one row per student, one square per question, green for right and red for
      wrong (a blank counts as wrong). Columns are grouped by topic, and the bottom row is the
      class's percent right on each question.
    - **Class report:** each topic's percent correct, most missed first, with the learning
      targets inside it and who needs a retake on it. Print it or download it as a CSV.
+   - **Standards:** which standards this test showed, for the class and for each student (see
+     below). Needs a question map.
    - **By student:** each student's score, what they missed, and the wrong answer they chose.
    - **By question:** percent correct and the most-chosen wrong answer, which usually names
      the misunderstanding to reteach.
@@ -57,6 +59,23 @@ file alone, the planner shows right and wrong (from Canvas's own points) questio
 and the retake prompts still carry each missed question and the answer chosen. The question map
 adds topics, learning targets, the correct answer for questions nobody got right, and the
 reason each wrong answer is wrong.
+
+### Standards: what this test showed
+
+The **Standards** tab answers "which standards has this test shown?", by each question's
+standard (its learning target in the map), for the class and for each student. The rules are
+Jeff's (2026-11-25):
+
+- A standard is **tested** when at least **2 questions** assess it. With one question, a lucky
+  guess could pass it, so it is marked too few to judge.
+- A student has **shown** a tested standard when **every one** of its questions is right, and
+  **not yet** otherwise. A student who saw fewer than 2 of its questions is not judged on it.
+- A standard in the map's list that no question assesses is listed as **not on this test**. The
+  Map Maker keeps every standard pasted into it, so its maps show these gaps.
+
+It says "shown on multiple choice" and no more: a multiple-choice test cannot show a skill such
+as writing an argument. The download has a row per student, a column per standard and a row for
+the class; Projector safe numbers the students.
 
 ### The Map Maker: a question map without writing one
 

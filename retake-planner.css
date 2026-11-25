@@ -209,6 +209,11 @@ ol.howto{margin:0 0 12px;padding-left:20px;display:grid;gap:4px;font-size:13px;m
 .prompt summary{cursor:pointer;font-family:var(--head);font-weight:700;font-size:12.5px;color:var(--gold-ink);padding:8px 0}
 pre.prompt-text{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;padding:12px 14px;background:var(--inset);border-radius:10px;font-family:var(--text);font-size:12.5px;line-height:1.55;max-height:420px;overflow:auto}
 
+/* Standards (2026-11-25): a standard's code is longer than a question number */
+table.heat th.std{min-width:44px;padding:6px 8px;white-space:nowrap}
+table.heat th.std.thin,table.report.standards tr.thin td{color:var(--iron)}
+ul.untested{margin:0 0 8px}
+
 /* the Map Maker (2026-11-24): folded shut until the teacher opens it */
 #maker summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
 #maker summary::-webkit-details-marker{display:none}

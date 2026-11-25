@@ -650,5 +650,71 @@ ok('Map Maker: a question everyone got right, or nobody did, still makes a map',
   assert.ok(E.parseMap(JSON.stringify(strict)).problems.some(p => /fewer than two/.test(p)), 'a hand-written map still needs two choices');
 });
 
+/* ── standards coverage (2026-11-25) ────────────────────────────────────── */
+// Jeff's rules: a standard is tested by at least 2 questions; a student has shown it when
+// every one of its questions is right; the class and each student.
+// The invented test: Z.1 LT1 is questions 1-2, Z.1 LT2 is 3-4, Z.2 LT1 is 5-6, and
+// Ann missed 1; Ben 1, 2 and 5; Cat nothing; Dan 3, 4 and 6.
+function covSummary(cov, a) {
+  const name = new Map(a.students.map(s => [s.key, s.name.split(' ')[0]]));
+  return cov.rows.map(r => r.lt + ':' + r.status + ':' + r.shown.map(k => name.get(k)).join('.') + '/' + r.notYet.map(k => name.get(k)).join('.') + '/' + r.few.map(k => name.get(k)).join('.')).join(' | ');
+}
+
+ok('standards: tested by 2 or more questions, shown only with every question right', () => {
+  const { a } = run(wide());
+  const cov = E.coverage(MAP, a);
+  assert.strictEqual(E.MIN_QUESTIONS, 2);
+  assert.strictEqual(covSummary(cov, a), 'Z.1 LT1:tested:Cat.Dan/Ann.Ben/ | Z.1 LT2:tested:Ann.Ben.Cat/Dan/ | Z.2 LT1:tested:Ann.Cat/Ben.Dan/');
+  assert.strictEqual(cov.tested, 3);
+  assert.deepStrictEqual(cov.students.map(s => s.shown), [2, 1, 3, 1], 'each student\'s count of standards shown');
+  assert.strictEqual(cov.rows[0].pct, 0.5);
+  // Negative control: one more miss for Cat turns her shown standard into not yet.
+  const q = MAP.questions[0];
+  const col = 8 + ORDER.indexOf(0) * 2;
+  const { a: b } = run(wide({ mutate: rows => { rows[3][col] = q.options[(q.answer + 1) % 4]; rows[3][col + 1] = '0.0'; } }));
+  assert.ok(/Z\.1 LT1:tested:Dan\/Ann\.Ben\.Cat\//.test(covSummary(E.coverage(MAP, b), b)), covSummary(E.coverage(MAP, b), b));
+});
+
+ok('standards: one question is too few to judge; a listed standard no question asks is not on the test', () => {
+  const m = inventedMap();
+  m.questions[5].lt = 'Z.3 LT1';
+  m.targets['Z.3 LT1'] = 'I can explain three.';
+  m.targets['Z.9 LT1'] = 'I can explain nine.';
+  const map = E.parseMap(JSON.stringify(m)).map;
+  const { a } = run(wide(), {}, map);
+  const cov = E.coverage(map, a);
+  const z2 = cov.rows.find(r => r.lt === 'Z.2 LT1');
+  assert.strictEqual(z2.status, 'thin');
+  assert.strictEqual(z2.few.length, 4, 'every student: too few questions');
+  assert.strictEqual(z2.pct, null);
+  assert.strictEqual(cov.rows.find(r => r.lt === 'Z.3 LT1').status, 'thin');
+  assert.deepStrictEqual(cov.untested.map(r => r.lt), ['Z.9 LT1']);
+  assert.strictEqual(cov.tested, 2);
+  assert.strictEqual(cov.thin, 2);
+  assert.deepStrictEqual(E.coverage(MAP, run(wide()).a).untested, [], 'negative control: a full list has nothing untested');
+});
+
+ok('standards: a student who saw only one of a standard\'s questions is not judged on it', () => {
+  const { a } = run(long({ mutate: rows => rows.forEach(r => {
+    if (r[0] === 'Cat Invented' && r[5] === 'item-1') { r[7] = ''; r[8] = ''; r[10] = 'Not Attempted'; }
+  }) }));
+  const cov = E.coverage(MAP, a);
+  assert.strictEqual(covSummary(cov, a).split(' | ')[0], 'Z.1 LT1:tested:Dan/Ann.Ben/Cat');
+  assert.strictEqual(cov.rows[0].pct, 1 / 3, 'judged on the three who saw both questions');
+});
+
+ok('standards: the download has a row per student and per class, and no names when projector safe', () => {
+  const { a } = run(wide());
+  const cov = E.coverage(MAP, a);
+  const rows = E.parseCsv(E.coverageCsv(cov, a));
+  assert.deepStrictEqual(rows[0], ['student', 'section', 'standards shown', 'standards tested', 'Z.1 LT1', 'Z.1 LT2', 'Z.2 LT1']);
+  assert.deepStrictEqual(rows[1], ['Ann Invented', 'Green', '2', '3', 'not yet', 'shown', 'shown']);
+  assert.deepStrictEqual(rows[5], ['Class: students who showed it', '', '', '', '2 of 4', '3 of 4', '2 of 4']);
+  const anon = E.coverageCsv(cov, a, { anon: true });
+  assert.ok(!NAMES.some(n => anon.includes(n.split(' ')[0])) && !/Green|Silver/.test(anon), 'projector safe: no names, no classes');
+  assert.ok(/Student 1/.test(anon), 'students by number');
+  assert.ok(NAMES.some(n => E.coverageCsv(cov, a).includes(n)), 'negative control: names are there when shown');
+});
+
 console.log(failed ? `\n${failed} failed` : '\nAll checks passed.');
 process.exit(failed ? 1 : 0);

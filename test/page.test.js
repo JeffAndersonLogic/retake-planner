@@ -303,6 +303,38 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-canvas-only.png'), fullPage: true });
   });
 
+  await check('Standards: the class table and each student agree, and projector safe hides names', async () => {
+    await page.click('#clear');
+    await page.click('#demo');
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#tab-standards');
+    const view = page.locator('#view-standards');
+    assert(await view.locator('table.standards tbody tr').count() === 4, 'four standards in the demo');
+    assert(/4 of 4<\/b> standards were tested by at least 2 questions/.test(await view.innerHTML()), 'the summary line');
+    assert(await view.locator('table.standards-grid tbody tr').count() === 12, 'a row per student');
+    // The class table's "n of m students" must add up to the squares in the grid.
+    const fromTable = (await view.locator('table.standards tbody td .muted.small').allInnerTexts()).map(t => Number(/^(\d+) of/.exec(t)[1])).reduce((x, y) => x + y, 0);
+    const ticks = await view.locator('table.standards-grid td.cell.right').count();
+    const crosses = await view.locator('table.standards-grid td.cell.wrong').count();
+    assert(ticks === fromTable, 'grid ' + ticks + ' vs table ' + fromTable);
+    assert(ticks > 0 && crosses > 0 && ticks + crosses === 48, 'negative control: neither all shown nor none: ' + ticks + '/' + crosses);
+    // Each student's count matches their row, and a perfect score shows every standard.
+    const rows = await page.$$eval('#view-standards table.standards-grid tbody tr', trs => trs.map(tr => ({ who: tr.querySelector('th').textContent, shown: tr.querySelector('td.score').textContent, ticks: tr.querySelectorAll('td.cell.right').length })));
+    rows.forEach(r => assert(r.shown === r.ticks + ' of 4', r.who + ': ' + r.shown + ' but ' + r.ticks + ' ticks'));
+    assert(rows.find(r => r.who === 'Casey Demo').ticks === 4, 'a perfect score shows all four');
+    assert(rows.find(r => r.who === 'Jordan Demo').ticks < 4, 'a student with misses does not');
+    await page.click('#names [data-v="anon"]');
+    assert(!/Demo/.test(await view.locator('table.standards-grid').innerText()), 'no names on the projector');
+    assert(/Student 1/.test(await view.innerText()), 'numbers instead');
+    await page.click('#names [data-v="show"]');
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', [fx.blockFile]);
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#tab-standards');
+    assert(/Standards need a question map/.test(await view.innerText()), 'without a map, it says what is needed');
+    await page.click('#tab-heat');
+  });
+
   await check('the Map Maker: tag with an AI\'s reply, fix what it missed, use the map, save it', async () => {
     await page.click('#clear');
     assert(await page.locator('#maker').isHidden(), 'no Map Maker before a file');
@@ -316,7 +348,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const stems = await page.$$eval('#maker-table tbody tr', rows => rows.map(r => r.querySelector('td.q').textContent));
     const ltOf = k => ['X.1 LT1', 'X.1 LT2', 'X.2 LT1'][(k - 1) % 3];
     const fixtureN = stems.map(s => Number(/Fixture question (\d+)/.exec(s)[1]));
-    await page.fill('#maker-standards', 'X.1 LT1: I can explain invented idea one.\nX.1 LT2: I can explain invented idea two.\nX.2 LT1: I can compare invented cases.');
+    await page.fill('#maker-standards', 'X.1 LT1: I can explain invented idea one.\nX.1 LT2: I can explain invented idea two.\nX.2 LT1: I can compare invented cases.\nX.9 LT1: I can explain an idea this test never asks about.');
     await page.click('#maker-copy');
     const prompt = await page.evaluate(() => navigator.clipboard.readText());
     assert(/Q1\. Fixture question/.test(prompt) && /X\.2 LT1: I can compare/.test(prompt), 'the prompt lists questions and standards');
@@ -347,7 +379,12 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(/-Retake-Map\.json$/.test(dl.suggestedFilename()), dl.suggestedFilename());
     const saved = E.parseMap(fs.readFileSync(await dl.path(), 'utf8'));
     assert(saved.map && !saved.problems.length, 'the saved map reads back: ' + saved.problems.join(' '));
-    assert(saved.map.questions.length === 6 && Object.keys(saved.map.targets).length === 3, 'every question and standard saved');
+    assert(saved.map.questions.length === 6 && Object.keys(saved.map.targets).length === 4, 'every question and standard saved, tested or not');
+    // The standard no question asks about is named as a gap.
+    await page.click('#tab-standards');
+    const std = await page.locator('#view-standards').innerText();
+    assert(/3 of 3 standards were tested/.test(std) && /Not on this test/.test(std) && /X\.9 LT1/.test(std), std.slice(0, 400));
+    await page.click('#tab-heat');
     // Projector safe: the Map Maker shows the test, so it hides.
     await page.click('#names [data-v="anon"]');
     assert(await page.locator('#maker-body').isHidden() && await page.locator('#maker-hidden').isVisible(), 'hidden on the projector');
@@ -491,7 +528,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await phone.goto(origin + '/index.html', { waitUntil: 'load' });
     await phone.click('#demo');
     await phone.waitForSelector('#results:not([hidden])');
-    for (const tab of ['targets', 'students', 'questions']) {
+    for (const tab of ['targets', 'standards', 'students', 'questions']) {
       await phone.click('#tab-' + tab);
       const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert(over <= 1, tab + ' scrolls sideways by ' + over + 'px');

@@ -58,6 +58,8 @@
  *   planCsv(analysis, options)           -> CSV, one row per student per topic or target
  *   reportRows(analysis)                 -> topics (or targets, or questions), most missed first
  *   reportCsv(analysis, options)         -> the class report as CSV
+ *   coverage(map, analysis)              -> each standard: tested (2+ questions) or not, who showed it
+ *   coverageCsv(coverage, analysis, o)   -> one row per student, one column per standard
  *   retakePrompt(analysis, student, o)   -> a prompt for the teacher's own AI, no name in it
  *   classPrompt(analysis, o)             -> one prompt for every student who missed something
  *                                           o: style 'retake'|'corrections', count 1 to 10 */
@@ -68,7 +70,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.3.0';
+  const VERSION = 'retake-planner/1.4.0';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -980,6 +982,74 @@
     return out.join('\r\n') + '\r\n';
   }
 
+  /* ── standards coverage: which standards this test showed ─────────────── */
+
+  // Jeff, 2026-11-25. A multiple-choice test can show a standard only if it asks enough
+  // about it, and a student shows it only by getting all of that right:
+  //   - a standard is TESTED when at least MIN_QUESTIONS questions assess it ("2
+  //     questions to meet a standard"); with fewer, a lucky guess could pass it;
+  //   - a student has SHOWN a tested standard when every one of its questions they were
+  //     given is correct ("all questions answered correctly"), and NOT YET otherwise;
+  //   - a student given fewer than MIN_QUESTIONS of its questions (the rest unseen) has
+  //     too little evidence either way;
+  //   - a standard in the map's list that no question assesses is NOT ON THIS TEST.
+  // Always by standard (each question's learning target), whatever the grouping chosen
+  // elsewhere, and for both the class and each student. It says "shown on multiple
+  // choice", never more: a multiple-choice test cannot show a skill such as writing an
+  // argument.
+  const MIN_QUESTIONS = 2;
+  function coverage(map, a) {
+    const took = a.students.filter(s => s.took);
+    const order = [];
+    a.questions.forEach(x => { if (!order.includes(x.q.lt)) order.push(x.q.lt); });
+    order.sort((p, q) => p.localeCompare(q, 'en', { numeric: true }));
+    const words = map.targets || {};
+    const cells = new Map(took.map(s => [s.key, {}]));
+    const rows = order.map(lt => {
+      const qs = a.questions.filter(x => x.q.lt === lt).map(x => x.q.n);
+      const status = qs.length >= MIN_QUESTIONS ? 'tested' : 'thin';
+      const shown = [];
+      const notYet = [];
+      const few = [];
+      took.forEach(s => {
+        const counted = s.results.filter(r => r.q.lt === lt && r.status !== 'absent' && r.status !== 'unknown');
+        let cell;
+        if (status === 'thin' || counted.length < MIN_QUESTIONS) cell = 'few';
+        else cell = counted.every(r => r.status === 'correct') ? 'shown' : 'notyet';
+        cells.get(s.key)[lt] = cell;
+        (cell === 'shown' ? shown : cell === 'notyet' ? notYet : few).push(s.key);
+      });
+      const judged = shown.length + notYet.length;
+      return { lt, text: String(words[lt] || ''), questions: qs, status, shown, notYet, few, pct: judged ? shown.length / judged : null };
+    });
+    // Standards the map lists that this test never asked about (the Map Maker keeps every
+    // standard the teacher pasted, tested or not).
+    const untested = Object.keys(words).filter(lt => !order.includes(lt))
+      .sort((p, q) => p.localeCompare(q, 'en', { numeric: true }))
+      .map(lt => ({ lt, text: String(words[lt] || ''), questions: [], status: 'untested' }));
+    return {
+      min: MIN_QUESTIONS, rows, untested,
+      students: took.map(s => ({ key: s.key, n: s.n, cells: cells.get(s.key), shown: rows.filter(r => r.status === 'tested' && cells.get(s.key)[r.lt] === 'shown').length })),
+      tested: rows.filter(r => r.status === 'tested').length,
+      thin: rows.filter(r => r.status === 'thin').length
+    };
+  }
+  // One row per student, one column per standard, then a row for the class.
+  const CELL_WORD = { shown: 'shown', notyet: 'not yet', few: 'too few questions' };
+  function coverageCsv(cov, a, options) {
+    const anon = !!(options && options.anon);
+    const byKey = new Map(a.students.map(s => [s.key, s]));
+    const cols = cov.rows;
+    const out = [['student', 'section', 'standards shown', 'standards tested'].concat(cols.map(r => r.lt)).map(csvCell).join(',')];
+    cov.students.forEach(st => {
+      const s = byKey.get(st.key);
+      out.push([display(s, anon), anon ? '' : s.section, st.shown, cov.tested].concat(cols.map(r => CELL_WORD[st.cells[r.lt]])).map(csvCell).join(','));
+    });
+    out.push(['Class: students who showed it', '', '', ''].concat(cols.map(r => (r.status === 'tested' ? r.shown.length + ' of ' + (r.shown.length + r.notYet.length) : 'only ' + r.questions.length + ' question'))).map(csvCell).join(','));
+    cov.untested.forEach(r => out.push(['Not on this test: ' + r.lt, '', '', ''].concat(cols.map(() => '')).map(csvCell).join(',')));
+    return out.join('\r\n') + '\r\n';
+  }
+
   /* ── retake questions: a prompt for the teacher's own AI ──────────────── */
 
   // Jeff, 2026-11-21: the planner writes the prompt and the teacher pastes it into
@@ -1051,5 +1121,6 @@
   }
 
   return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, combineExports, match, mapFromExport,
-    parseStandards, tagPrompt, parseTags, buildMap, analyze, planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
+    parseStandards, tagPrompt, parseTags, buildMap, analyze, planText, planCsv, reportRows, reportCsv, MIN_QUESTIONS, coverage, coverageCsv,
+    retakePrompt, classPrompt };
 });
