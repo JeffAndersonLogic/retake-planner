@@ -175,5 +175,16 @@ check('text normalization preserves mathematical distinctions and non-Latin text
   assert.strictEqual(E.norm('<p>Caf&eacute; test</p>'), E.norm('Caf&eacute; test'), 'HTML still strips');
 });
 
+check('long-layout exports retain compact item types and exclude essays', () => {
+  const text = csv([['Name', 'ID', 'ItemID', 'ItemType', 'Question Text', 'Answer', 'Points Received', 'Points Possible'],
+    ['Pat Invented', '1', 'mc', 'MultipleChoice', 'Invented choice question?', 'Invented answer', 1, 1],
+    ['Pat Invented', '1', 'essay', 'Essay', 'Invented essay question?', 'Invented essay response', 2, 2]]);
+  const exp = E.readExport(text);
+  assert.strictEqual(exp.layout, 'long');
+  assert.strictEqual(exp.items.length, 1);
+  assert.strictEqual(exp.items[0].type, 'MultipleChoice');
+  assert.strictEqual(exp.skippedItems[0].type, 'Essay');
+});
+
 console.log(failed ? '\n' + failed + ' reliability checks failed' : '\nAll reliability checks passed.');
 process.exitCode = failed ? 1 : 0;

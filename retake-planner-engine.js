@@ -392,7 +392,7 @@
       const scoreCol = findCol(heads, LONG.score);
       const possibleCol = findCol(heads, LONG.possible);
       const statusCol = findCol(heads, LONG.status);
-      const typeCol = findCol(heads, ['item type', 'question type']);
+      const typeCol = findCol(heads, ['item type', 'itemtype', 'question type', 'questiontype']);
       const idCol = findCol(heads, ['item id', 'question id']);
       const items = new Map();
       // Latest attempt per student, decided before anything is recorded.
