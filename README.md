@@ -8,6 +8,47 @@ It reads results. It does not grade. Canvas holds every grade.
 
 **Open it:** https://jeffandersonlogic.github.io/retake-planner/
 
+## Student packets and AI reply import: 1.6.0
+
+The **Student packets** tab completes a manual handoff to MagicSchool's Raina or another
+teacher-approved AI. The planner never contacts the AI itself. This source builds on the 1.4.1
+reliability update; branch versions are not live until merged and deployed from `main`.
+
+1. Choose **New retake questions** or **Test corrections**, a question count, and optionally the
+   grade/reading level and course. The same retake rule and class filter govern packet eligibility.
+2. Select a batch of **1, 3 or 5 students**, then **Copy packet prompt for Raina**. Paste it into
+   Raina or your approved AI. This is a different prompt from the plain-text Retake questions
+   prompts: it requests the exact return format required for packet import. Student names, IDs
+   and classes stay in the local mapping; the prompt uses stable student numbers.
+3. Keep this tab open and paste the **complete AI reply** into the packet reply box. Choose
+   **Check and import reply**. The importer requires the matching request ID, every student in
+   the batch, the requested count, unique question IDs/text, references only to qualifying missed
+   questions, coverage of each qualifying learning target, teacher answer guidance, a rubric,
+   and suggested whole-number points. Corrections require one distinct correction per missed
+   original question. A truncated, stale or mismatched reply is refused with specific problems.
+4. Edit the student-facing question, source references, points, teacher guidance and rubric.
+   Check facts, reading level and whether the question includes enough context to be answered.
+   The importer checks structure, not factual accuracy or whether the AI leaked an answer into
+   its student-facing prose. **Explicitly approve each packet** after review. Editing a question
+   or directions removes approval; changing the analysis or prompt settings invalidates the
+   request, draft and approvals. Copying the current prompt again preserves the draft.
+5. Print or download the **approved student packets**, with names and writing lines, and the
+   **separate teacher key**, with expected evidence and scoring guidance. Only approved students
+   in this batch are included. The suggested points are for teacher review; the page never grades.
+   Browser Print can save a PDF. Downloads are self-contained printable HTML with no scripts or
+   network access. Use the packet buttons; ordinary browser printing hides the review editor.
+6. Print/download the batch before choosing **Discard current draft / start another batch**.
+   Batch selection is locked while a request is active to prevent accidental replacement.
+
+Projector safe hides prompts, imported questions and teacher guidance, and disables packet
+printing/downloads. Drafts and approvals exist only in this tab; closing or starting over loses
+them. Downloaded packets/keys are private teacher files and must not be committed to this public
+repository. No live MagicSchool integration, automatic prompt transfer or automatic grading is
+provided. The return format must still be tried with real Raina output during the local pilot.
+The invented-student demo includes **Try an invented reply** after copying a packet prompt, so
+teachers can try reviewing and printing without contacting an AI. It is unavailable for uploaded
+results and still requires approval.
+
 ## Reliability update: 1.4.1
 
 This source version fixes the November 25 audit findings. A version on a working branch is
@@ -205,7 +246,7 @@ answer choices, especially when several questions have identical wording.
 npm test                # engine, reliability regressions and the no-maps guard; needs only Node
 npm ci                  # pinned browser-test dependency from package-lock.json
 npx --no-install playwright-core install chromium
-npm run test:browser    # the page in Chromium
+npm run test:browser    # analysis and packet workflows in Chromium
 ```
 
 Publishing: GitHub Pages serves `main` from the repository root (Settings, Pages, Deploy from a
