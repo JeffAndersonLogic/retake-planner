@@ -1,11 +1,14 @@
 {
   "name": "retake-planner",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "Retake Planner by ANDERSONLOGIC ai: a right-or-wrong heat map, a class report by topic, and retake prompts from a Canvas New Quizzes test.",
   "scripts": {
-    "test": "node test/engine.test.js && node test/no-maps.test.js",
+    "test": "node test/engine.test.js && node test/reliability.test.js && node test/no-maps.test.js",
     "test:browser": "node test/page.test.js",
     "test:all": "npm test && npm run test:browser"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
   }
 }

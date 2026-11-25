@@ -70,7 +70,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.4.0';
+  const VERSION = 'retake-planner/1.4.1';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -82,11 +82,11 @@
   const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', ndash: '-', mdash: '-', hellip: '...' };
   function stripHtml(s) {
     return String(s == null ? '' : s)
-      .replace(/<[^>]*>/g, ' ')
+      .replace(/<\/?[a-z][a-z0-9]*(?:\s+[^<>]*|\s*\/?)>/gi, ' ')
       .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
         if (e[0] === '#') {
           const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+          return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF && !(code >= 0xD800 && code <= 0xDFFF) ? String.fromCodePoint(code) : m;
         }
         const v = ENTITIES[e.toLowerCase()];
         return v == null ? m : v;
@@ -98,7 +98,8 @@
     return stripHtml(s)
       .normalize('NFKD').replace(/[̀-ͯ]/g, '')
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/([^\p{L}\p{N}\s])/gu, ' $1 ')
+      .replace(/[^\p{L}\p{N}<>=+*/^%−-]+/gu, ' ')
       .trim();
   }
   function plain(s) { return stripHtml(s).replace(/\s+/g, ' ').trim(); }
@@ -128,6 +129,7 @@
         row.push(cell); rows.push(row); row = []; cell = '';
       } else cell += c;
     }
+    if (quoted) throw new Error('The CSV has an unfinished quoted cell. Download the original Student Analysis CSV again.');
     if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
     return rows.filter(r => r.some(v => String(v).trim() !== ''));
   }
@@ -135,6 +137,11 @@
   function csvCell(v) {
     const s = v == null ? '' : String(v);
     return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  // Only downloads use this: importing a CSV must preserve the original text.
+  function downloadCell(v) {
+    const s = v == null ? '' : String(v);
+    return csvCell(typeof v !== 'number' && /^(?:\s*[=+@-]|[\t\r\n])/.test(s) ? "'" + s : s);
   }
 
   /* ── the question map ─────────────────────────────────────────────────── */
@@ -163,7 +170,7 @@
       // points still decide right and wrong for it.
       const seen = q.seen === true;
       const options = Array.isArray(q.options) ? q.options.map(String) : [];
-      if (options.length < (seen ? 1 : 2)) { problems.push(label + (seen ? ' has no answer choices.' : ' has fewer than two answer choices.')); return; }
+      if (!seen && options.length < 2) { problems.push(label + ' has fewer than two answer choices.'); return; }
       let answer = q.answer;
       if (typeof answer === 'string' && /^[A-Ha-h]$/.test(answer.trim())) answer = LETTERS.indexOf(answer.trim().toUpperCase());
       if (seen && answer == null) {
@@ -180,7 +187,7 @@
       if (new Set(normed).size !== normed.length) warnings.push(label + ' has two answer choices that read the same.');
       const points = Number(q.points);
       questions.push({
-        n, topic: String(q.topic || ''), lt: String(q.lt), kc: String(q.kc || ''), skill: String(q.skill || ''),
+        n, itemId: String(q.itemId || ''), topic: String(q.topic || ''), lt: String(q.lt), kc: String(q.kc || ''), skill: String(q.skill || ''),
         reasoning: String(q.reasoning || ''), source: String(q.source || ''), stem: String(q.stem || ''),
         options, answer, points: Number.isFinite(points) && points > 0 ? points : 1, rationale: String(q.rationale || ''), seen,
         _opts: normed, _stem: norm(q.stem || '')
@@ -262,10 +269,24 @@
   function statusOf(v) {
     const s = norm(v);
     if (!s) return '';
-    if (s === 'not attempted' || s === 'not supported' || s === 'n a' || s === 'na') return 'absent';
+    if (s === 'not attempted' || s === 'not supported' || s === 'n a' || s === 'n/a' || s === 'n / a' || s === 'na') return 'absent';
     if (s === 'no answer' || s === 'unanswered' || s === 'blank' || s === 'no response' || s === 'not answered' || s === 'skipped') return 'blank';
     if (s === 'not graded' || s === 'needs grading' || s === 'pending') return 'ungraded';
     return 'graded';
+  }
+
+  function supportedItem(it) {
+    const type = norm(it.type || '').replace(/[^a-z]/g, '');
+    return !it.typeConflict && (!plain(it.type) || type === 'multiplechoice' || type === 'multiplechoicequestion');
+  }
+  function finishExport(exp) {
+    exp.skippedItems = exp.items.filter(it => !supportedItem(it));
+    exp.items = exp.items.filter(supportedItem);
+    if (exp.skippedItems.length) exp.notes.push(exp.skippedItems.length + ' item(s) skipped: only single-answer multiple choice is supported. Types: '
+      + [...new Set(exp.skippedItems.map(it => it.typeConflict ? 'conflicting item types' : it.type))].join(', ') + '.');
+    exp.unknownTypes = exp.items.filter(it => !it.type).length;
+    if (exp.unknownTypes) exp.notes.push(exp.unknownTypes + ' item(s) have no exported question type. Confirm these are single-answer multiple choice.');
+    return exp;
   }
 
   // A file opened in Excel and saved again can come back with its accents and curly
@@ -312,7 +333,9 @@
 
   function readExport(text) {
     const repaired = repairMojibake(text);
-    const rows = parseCsv(repaired);
+    let rows;
+    try { rows = parseCsv(repaired); }
+    catch (e) { return { layout: 'unknown', students: [], items: [], notes: [e.message] }; }
     const notes = [];
     if (rows.length < 2) return { layout: 'empty', students: [], items: [], notes: ['The Canvas file has no student rows.'] };
     const header = rows[0].map(h => String(h));
@@ -321,6 +344,9 @@
       name: findCol(heads, ROLE.name), id: findCol(heads, ROLE.id), sis: findCol(heads, ROLE.sis),
       section: findCol(heads, ROLE.section), attempt: findCol(heads, ROLE.attempt)
     };
+    const totalEarned = findCol(heads, ['overall score', 'overallscore', 'final score', 'quiz score', 'total score']);
+    const totalPossible = findCol(heads, ['points possible', 'pointspossible', 'total points']);
+    const totalsOf = r => ({ earned: totalEarned >= 0 ? num(r[totalEarned]) : null, possible: totalPossible >= 0 ? num(r[totalPossible]) : null });
     if (repaired !== String(text)) notes.push('Accents and quotation marks in the file had been scrambled (it was probably opened and saved in Excel), and were repaired.');
     const respCol = findCol(heads, LONG.response);
     const itemCol = findCol(heads, LONG.item);
@@ -352,6 +378,7 @@
           key,
           name: col.name >= 0 ? plain(r[col.name]) : (unnamed ? key : ''),
           id: col.id >= 0 ? String(r[col.id] || '').trim() : '',
+          sis: col.sis >= 0 ? String(r[col.sis] || '').trim() : '',
           section: col.section >= 0 ? plain(r[col.section]) : ''
         });
       }
@@ -365,6 +392,8 @@
       const scoreCol = findCol(heads, LONG.score);
       const possibleCol = findCol(heads, LONG.possible);
       const statusCol = findCol(heads, LONG.status);
+      const typeCol = findCol(heads, ['item type', 'itemtype', 'question type', 'questiontype']);
+      const idCol = findCol(heads, ['item id', 'question id']);
       const items = new Map();
       // Latest attempt per student, decided before anything is recorded.
       const latest = new Map();
@@ -380,15 +409,23 @@
         if (!k) return;
         const a = attemptOf(r);
         if (latest.has(k) && a != null && a !== latest.get(k)) { multi += 1; return; }
+        students.get(k).canvas = totalsOf(r);
         const itemKey = String(r[itemCol] || '').trim() || (posCol >= 0 ? String(r[posCol] || '').trim() : '');
         if (!itemKey) return;
         if (!items.has(itemKey)) {
           items.set(itemKey, {
             key: itemKey,
+            itemId: idCol >= 0 ? String(r[idCol] || '') : '',
             label: plain(textCol >= 0 ? r[textCol] : r[itemCol]),
             position: posCol >= 0 ? num(r[posCol]) : null,
             responses: {}
           });
+        }
+        if (typeCol >= 0 && r[typeCol]) {
+          const it = items.get(itemKey);
+          const type = plain(r[typeCol]);
+          if (it.type && norm(it.type) !== norm(type)) it.typeConflict = true;
+          it.type = type;
         }
         items.get(itemKey).responses[k] = {
           response: plain(r[respCol]),
@@ -400,7 +437,7 @@
       if (multi) notes.push('Some students have more than one attempt; the latest attempt is used.');
       const longItems = [...items.values()];
       fillPossible(longItems);
-      return { layout: 'long', shape: 'rows', students: [...students.values()], items: longItems, notes };
+      return finishExport({ layout: 'long', shape: 'rows', students: [...students.values()], items: longItems, notes });
     }
 
     // Wide: one row per student, questions across the columns.
@@ -419,7 +456,8 @@
         if (h === 'status' && lastGroup && i > 0 && BLOCK_AFTER.includes(heads[i - 1])) { lastGroup.status = i; return; }
         if (BLOCK_BEFORE[h]) { pending[BLOCK_BEFORE[h]] = i; return; }
         const g = { key: 'column ' + (i + 1), label: plain(header[i]), response: i, score: -1, possible: -1,
-          status: pending.status != null ? pending.status : -1, type: pending.type != null ? pending.type : -1, first: i };
+          status: pending.status != null ? pending.status : -1, type: pending.type != null ? pending.type : -1,
+          itemId: pending.itemId != null ? pending.itemId : -1, first: i };
         groups.set(g.key, g);
         pending = {};
         lastGroup = g;
@@ -466,6 +504,7 @@
     byStudent.forEach(({ r, multi: m }) => {
       if (m) multi += 1;
       const k = touch(r);
+      students.get(k).canvas = totalsOf(r);
       items.forEach(it => {
         const c = it._cols;
         it.responses[k] = {
@@ -474,13 +513,22 @@
           possible: c.possible >= 0 ? num(r[c.possible]) : (c.score >= 0 && num(header[c.score]) != null ? num(header[c.score]) : null),
           status: c.status >= 0 ? statusOf(r[c.status]) : ''
         };
-        if (c.type >= 0 && !it.type) it.type = plain(r[c.type]);
+        if (c.type >= 0 && r[c.type]) {
+          const type = plain(r[c.type]);
+          if (it.type && norm(it.type) !== norm(type)) it.typeConflict = true;
+          it.type = type;
+        }
+        if (c.itemId >= 0 && r[c.itemId]) {
+          const id = String(r[c.itemId]);
+          if (!it.itemId && !it.itemIdConflict) it.itemId = id;
+          else if (it.itemId !== id) { it.itemId = ''; it.itemIdConflict = true; }
+        }
       });
     });
     items.forEach(it => { delete it._cols; });
     fillPossible(items);
     if (multi) notes.push(multi + ' student(s) appear on more than one row; the latest attempt is used.');
-    return { layout: 'wide', shape: isBlock ? 'student-analysis' : 'columns', students: [...students.values()], items, notes };
+    return finishExport({ layout: 'wide', shape: isBlock ? 'student-analysis' : 'columns', students: [...students.values()], items, notes });
   }
 
   // When a file gives the points a student earned but not the points a question was
@@ -494,42 +542,63 @@
       const scores = rs.map(r => r.score).filter(s => s != null);
       if (!scores.length) return;
       const most = Math.max.apply(null, scores);
-      if (most > 0) rs.forEach(r => { r.possible = most; });
+      if (most > 0) rs.forEach(r => { r.possible = most; r.inferredPossible = true; });
     });
   }
 
   // Several results files at once, one per class period (Jeff, 2026-11-24). A teacher
   // whose periods are separate Canvas courses downloads one file per course; each
   // becomes a class named by the teacher. A file that carries its own section column
-  // keeps it. Questions are lined up across files by their wording, in order, so two
-  // questions worded the same in one file stay two questions.
+  // keeps it. Questions are matched independently across files by identity evidence;
+  // unresolved alignment and overlapping student IDs stop a combined analysis.
   //   files: [{ text, label }]  ->  the same shape readExport returns, plus files: [...]
-  function combineExports(files) {
+  function combineExports(files, map) {
     const list = (files || []).map((f, i) => ({ label: String(f.label || '').trim() || 'Class ' + (i + 1), exp: readExport(f.text) }));
     const notes = [];
     const students = [];
     const items = new Map();
     const summary = [];
+    const identities = new Map();
+    const skippedItems = [];
+    let blocked = false;
+    let reference = map || null;
     list.forEach(({ label, exp }, fi) => {
       const ok = exp.items.length > 0 && exp.students.length > 0;
       summary.push({ label, students: ok ? exp.students.length : 0, questions: ok ? exp.items.length : 0, ok, layout: exp.layout });
-      if (!ok) { notes.push(label + ': ' + (exp.notes[0] || 'this file could not be read as quiz results.')); return; }
+      if (!ok) { blocked = true; notes.push(label + ': ' + (exp.notes[0] || 'this file could not be read as quiz results.')); return; }
+      skippedItems.push(...(exp.skippedItems || []));
       const prefix = 'File ' + (fi + 1) + ': ';
       const keyOf = new Map();
       exp.students.forEach(s => {
+        const identity = s.id ? 'id:' + s.id : s.sis ? 'sis:' + s.sis : '';
+        if (identity) {
+          if (identities.has(identity)) {
+            blocked = true;
+            if (!notes.some(n => /overlapping students/.test(n))) notes.push('These files have overlapping students. Remove the older export or load one file at a time; the same student must not be counted twice.');
+          } else identities.set(identity, fi);
+        }
         const key = prefix + s.key;
         keyOf.set(s.key, key);
         const unnamed = s.name === s.key && /^Row \d+$/.test(s.key);
-        students.push({ key, name: unnamed ? label + ', ' + s.name : s.name, id: s.id, section: s.section || label });
+        students.push({ ...s, key, name: unnamed ? label + ', ' + s.name : s.name, section: s.section || label });
       });
-      const seen = new Map();
-      exp.items.forEach(it => {
-        const base = norm(it.label) || 'position ' + it.position;
-        const k = (seen.get(base) || 0) + 1;
-        seen.set(base, k);
-        const key = base + ' #' + k;
-        if (!items.has(key)) items.set(key, { key, label: it.label, position: items.size + 1, type: it.type, responses: {}, _files: 0 });
+      // Match each file independently. Column order cannot align repeated stems.
+      const first = !reference;
+      if (first) reference = { questions: exp.items.map((it, i) => ({ n: i + 1, itemId: it.itemId || '', stem: it.label,
+        _stem: norm(it.label), _opts: [...new Set(Object.values(it.responses).map(r => norm(r.response)).filter(Boolean))] })) };
+      const aligned = first ? exp.items.map((it, i) => ({ item: it, q: reference.questions[i] })) : match(reference, exp).pairs;
+      if (aligned.length !== exp.items.length) {
+        blocked = true;
+        notes.push(label + ': questions could not be aligned safely with the other files. Load a complete question map, or analyze each class separately.');
+      }
+      aligned.forEach(({ item: it, q }) => {
+        const key = 'question ' + q.n;
+        if (!items.has(key)) items.set(key, { key, label: it.label, position: items.size + 1, type: it.type, itemId: q.itemId || '', responses: {}, _files: 0 });
         const into = items.get(key);
+        if (norm(into.label) !== norm(it.label)) {
+          blocked = true;
+          return; // the same ID with changed wording is a different assessment version
+        }
         into._files += 1;
         Object.keys(it.responses).forEach(sk => { into.responses[keyOf.get(sk)] = it.responses[sk]; });
       });
@@ -538,10 +607,12 @@
     const good = summary.filter(f => f.ok).length;
     const all = [...items.values()];
     if (all.some(it => it._files < good)) {
-      notes.push('Some questions are in only some of the files. Check that every file is from the same test; a question missing from a class\'s file is left out of that class\'s counts.');
+      blocked = true;
+      notes.push('Some questions are in only some of the files. Check that every file is from the same test. Remove the mismatched file or analyze each class separately.');
     }
     all.forEach(it => { delete it._files; });
-    return { layout: 'combined', shape: 'combined', students, items: all, notes, files: summary };
+    return { layout: 'combined', shape: 'combined', students, items: all, notes, files: summary, skippedItems,
+      unknownTypes: all.filter(it => !it.type).length, blocked };
   }
 
   /* ── matching Canvas's questions to the map ───────────────────────────── */
@@ -562,7 +633,13 @@
     const candidates = [];
     const stemCount = new Map();
     map.questions.forEach(q => stemCount.set(q._stem, (stemCount.get(q._stem) || 0) + 1));
+    const optionOwners = new Map();
+    map.questions.forEach((q, qi) => q._opts.forEach(o => {
+      if (!optionOwners.has(o)) optionOwners.set(o, new Set());
+      optionOwners.get(o).add(qi);
+    }));
     exp.items.forEach((it, ii) => {
+      if (!supportedItem(it)) return;
       const answers = Object.values(it.responses).map(r => r.response).filter(Boolean);
       const distinct = [...new Set(answers.map(norm))].filter(Boolean);
       const label = norm(it.label);
@@ -571,23 +648,36 @@
         distinct.forEach(a => { if (optionIndex(q, a) >= 0) hits += 1; });
         const stemHit = q._stem.length >= 12 && label.length >= 12 && (label.includes(q._stem) || q._stem.includes(label));
         const uniqueStem = stemHit && stemCount.get(q._stem) === 1;
-        if (!hits && !uniqueStem) return;
+        const idHit = !!(q.itemId && it.itemId && q.itemId === it.itemId);
+        const distinctive = distinct.some(a => {
+          const oi = optionIndex(q, a);
+          return oi >= 0 && q._opts[oi].length >= 12 && optionOwners.get(q._opts[oi]).size === 1;
+        });
         const ratio = distinct.length ? hits / distinct.length : 0;
-        // Every distinct answer students gave matches this question's choices: strong.
-        // The wording matches: a tiebreaker, or the only evidence when nobody answered.
-        const score = ratio * 10 + (stemHit ? 2 : 0) + (it.position === q.n ? 0.25 : 0);
+        // Position never resolves identity. Common choices alone are not evidence.
+        if (!idHit && !stemHit && !(distinctive && ratio >= 0.5)) return;
+        const score = (idHit ? 100 : uniqueStem ? 60 : distinctive && ratio >= 0.5 ? 30 : 10) + ratio;
         candidates.push({ ii, qi, score, hits, distinct: distinct.length, stemHit,
-          how: hits ? (ratio === 1 ? 'every answer matches its choices' : hits + ' of ' + distinct.length + ' answers match its choices') : 'its wording matches' });
+          how: idHit ? 'its Canvas item ID matches' : uniqueStem ? 'its wording matches' : 'its distinctive answer choices match' });
       });
     });
     candidates.sort((a, b) => b.score - a.score || a.qi - b.qi);
     const usedI = new Set();
     const usedQ = new Set();
     const pairs = [];
+    // Require a unique best candidate in both directions, using the original set.
+    // Removing one match must not turn weak leftover evidence into a confident match.
+    const uniqueBest = (c, key) => {
+      const others = candidates.filter(x => x !== c && x[key] === c[key]);
+      return others.every(x => c.score > x.score + 1e-9);
+    };
+    const ambiguousItems = [];
     candidates.forEach(c => {
       if (usedI.has(c.ii) || usedQ.has(c.qi)) return;
-      // Fewer than half the answers matching is not enough to call it this question.
-      if (c.hits && c.distinct && c.hits / c.distinct < 0.5 && !c.stemHit) return;
+      if (!uniqueBest(c, 'ii') || !uniqueBest(c, 'qi') || c.score < 30) {
+        if (!ambiguousItems.some(it => it === exp.items[c.ii])) ambiguousItems.push(exp.items[c.ii]);
+        return;
+      }
       usedI.add(c.ii); usedQ.add(c.qi);
       // A Map Maker question lists only the answers one set of classes chose, so another
       // class choosing a new wrong answer is expected there, not a sign of a wrong match.
@@ -600,7 +690,7 @@
       label: it.label, answered: Object.values(it.responses).filter(r => r.response).length
     }));
     const unmatchedQuestions = map.questions.filter((q, i) => !usedQ.has(i));
-    return { pairs, unmatchedItems, unmatchedQuestions };
+    return { pairs, unmatchedItems, unmatchedQuestions, ambiguousItems: ambiguousItems.filter(it => !pairs.some(p => p.item === it)) };
   }
 
   /* ── no question map: Canvas's own scores ─────────────────────────────── */
@@ -614,6 +704,7 @@
     const questions = [];
     const pairs = [];
     exp.items.forEach((it, i) => {
+      if (!supportedItem(it)) return;
       const rs = Object.values(it.responses);
       if (!rs.some(r => r.score != null)) return;
       const n = i + 1;
@@ -622,7 +713,7 @@
       const full = rs.find(r => r.response && r.score != null && r.score > 0 && (r.possible == null || r.score >= r.possible - 1e-9));
       const worth = rs.map(r => r.possible).find(p => p != null && p > 0);
       const q = {
-        n, topic: '', lt: 'Q' + n, kc: '', skill: '', reasoning: '', source: '', stem: it.label, options,
+        n, itemId: it.itemId || '', topic: '', lt: 'Q' + n, kc: '', skill: '', reasoning: '', source: '', stem: it.label, options,
         answer: full ? options.findIndex(o => norm(o) === norm(full.response)) : -1, points: worth || 1, rationale: '',
         _opts: options.map(norm), _stem: norm(it.label)
       };
@@ -750,19 +841,20 @@
       const options = q.options.slice();
       let answer = q.answer >= 0 ? q.answer : null;
       const t = plain(typed[q.n]);
-      if (answer == null && t) {
+      if (t) {
         const i = options.findIndex(x => norm(x) === norm(t));
         answer = i >= 0 ? i : options.push(t) - 1;
       }
       const tag = tags[q.n] || {};
-      return { n: q.n, topic: plain(tag.topic), lt: plain(tag.lt), stem: q.stem, options, answer, points: q.points, seen: true };
+      return { n: q.n, itemId: q.itemId || '', topic: plain(tag.topic), lt: plain(tag.lt), stem: q.stem, options, answer, points: q.points,
+        rationale: q.rationale || '', kc: q.kc || '', skill: q.skill || '', reasoning: q.reasoning || '', source: q.source || '', seen: q.seen !== false };
     });
     const targets = {};
     Object.keys(o.targets || {}).forEach(k => { targets[k] = String(o.targets[k] || ''); });
-    return {
-      map: { format: MAP_FORMAT, title: plain(o.title) || 'Untitled test', version: '', made: 'Retake Planner Map Maker', targets, topics: {}, questions },
-      problems
-    };
+    const map = { format: MAP_FORMAT, title: plain(o.title) || 'Untitled test', subtitle: String(o.subtitle || ''),
+      version: plain(o.version || ''), made: 'Retake Planner Map Maker', targets, topics: o.topics || {}, questions };
+    if (!problems.length) problems.push(...parseMap(map).problems);
+    return { map, problems };
   }
 
   /* ── the analysis ─────────────────────────────────────────────────────── */
@@ -817,10 +909,14 @@
       const correct = rs.filter(r => r.status === 'correct').length;
       const wrongCounts = new Map();
       rs.forEach(r => {
-        if (r.status === 'wrong' && r.choice >= 0) wrongCounts.set(r.choice, (wrongCounts.get(r.choice) || 0) + 1);
+        if (r.status !== 'wrong' || !r.response) return;
+        const key = norm(r.response);
+        const entry = wrongCounts.get(key) || { choice: r.choice, text: r.response, count: 0 };
+        entry.count += 1;
+        wrongCounts.set(key, entry);
       });
       let topWrong = null;
-      wrongCounts.forEach((count, choice) => { if (!topWrong || count > topWrong.count) topWrong = { choice, text: p.q.options[choice], count }; });
+      wrongCounts.forEach(entry => { if (!topWrong || entry.count > topWrong.count) topWrong = entry; });
       return { q: p.q, answered: rs.length, correct, blank: rs.filter(r => r.status === 'blank').length,
         pct: rs.length ? correct / rs.length : null, topWrong };
     });
@@ -870,15 +966,23 @@
     const everyone = exp.students.map(s => {
       let disagree = 0;
       let unknown = 0;
-      const results = pairs.map(p => {
-        const j = judge(p, p.item.responses[s.key]);
+      const results = pairs.map((p, pi) => {
+        const raw = p.item.responses[s.key];
+        const j = judge(p, raw);
         if (j.disagree) disagree += 1;
         if (j.status === 'unknown') unknown += 1;
-        return Object.assign({ q: p.q, worth: worth[pairs.indexOf(p)] }, j);
+        return Object.assign({ q: p.q, worth: worth[pi], score: raw ? raw.score : null,
+          estimated: !!(raw && raw.inferredPossible) || known[pi] == null }, j);
       });
       const counted = results.filter(r => r.status !== 'absent' && r.status !== 'unknown');
-      const earned = counted.filter(r => r.status === 'correct').reduce((t, r) => t + r.worth, 0);
-      const possible = counted.reduce((t, r) => t + r.worth, 0);
+      const itemEarned = counted.reduce((t, r) => t + (r.score != null ? r.score : r.status === 'correct' ? r.worth : 0), 0);
+      const itemPossible = counted.reduce((t, r) => t + r.worth, 0);
+      const canvas = s.canvas;
+      const hasTotal = canvas && canvas.earned != null && canvas.possible != null && canvas.possible > 0;
+      const estimated = counted.some(r => r.estimated);
+      const earned = hasTotal ? canvas.earned : itemEarned;
+      const possible = hasTotal ? canvas.possible : itemPossible;
+      const scoreSource = hasTotal ? 'canvas' : estimated ? 'estimated' : 'items';
       const byLt = new Map();
       counted.forEach(r => {
         const g = gk(r.q);
@@ -888,7 +992,8 @@
         if (r.status !== 'correct') { e.missed += 1; e.questions.push(r.q.n); }
       });
       const targetsMissed = ltOrder.map(lt => byLt.get(lt)).filter(e => e && e.missed > 0 && (rule === 'any' || e.missed * 2 > e.of));
-      return { key: s.key, name: s.name, id: s.id, section: s.section, results, earned, possible, took: counted.length > 0, targetsMissed, _disagree: disagree, _unknown: unknown };
+      return { key: s.key, name: s.name, id: s.id, section: s.section, results, earned, possible, scoreSource, itemEarned, itemPossible,
+        took: counted.length > 0, targetsMissed, _disagree: disagree, _unknown: unknown };
     });
     // "Student 3" means the same student on every panel and in every copy.
     everyone.filter(s => s.took).forEach((s, i) => { s.n = i + 1; });
@@ -913,6 +1018,11 @@
     if (unknown) notes.push(unknown + ' answer(s) could not be read as one of the choices and had no Canvas score, so they are left out of every count.');
     const absent = students.length - took.length;
     if (absent) notes.push(absent + ' student(s) have no answers to any matched question and are left out.');
+    if (took.some(s => s.scoreSource === 'estimated')) notes.push('Some scores are estimates: Canvas did not supply complete overall totals or explicit question maximums. Confirm the score in Canvas.');
+    if (took.some(s => s.scoreSource === 'canvas')) notes.push('Canvas score uses the exported overall total, including items outside this analysis. The heat map and standards use only matched, supported questions.');
+    if (took.some(s => s.scoreSource === 'canvas' && (Math.abs(s.earned - s.itemEarned) > 1e-9 || Math.abs(s.possible - s.itemPossible) > 1e-9))) {
+      notes.push('Canvas totals differ from the analyzed item totals. This can reflect skipped or unmatched items, adjusted grades, or estimated question maximums. The displayed score uses Canvas totals.');
+    }
 
     return {
       version: VERSION, rule, section, title: map.title, by, byLabel: BY_LABEL[by], keyless: !!map.keyless,
@@ -934,7 +1044,8 @@
     const anon = !!(options && options.anon);
     const lines = [a.title + ': retake plan', 'A target is listed when the student ' + (a.rule === 'most' ? 'missed most of its questions.' : 'missed any of its questions.'), ''];
     a.students.filter(s => s.took).forEach(s => {
-      lines.push(display(s, anon) + (s.section && !anon ? ' (' + s.section + ')' : '') + ': ' + s.earned + ' of ' + s.possible + ' points');
+      lines.push(display(s, anon) + (s.section && !anon ? ' (' + s.section + ')' : '') + ': ' + s.earned + ' of ' + s.possible + ' points'
+        + (s.scoreSource === 'canvas' ? ' (Canvas overall total)' : s.scoreSource === 'estimated' ? ' (estimated; confirm in Canvas)' : ' (analyzed items)'));
       if (!s.targetsMissed.length) lines.push('  Nothing to retake.');
       s.targetsMissed.forEach(e => {
         const t = a.targets.find(x => x.lt === e.lt);
@@ -948,14 +1059,14 @@
 
   function planCsv(a, options) {
     const anon = !!(options && options.anon);
-    const head = ['student', 'section', 'points', 'points possible', (a.byLabel || 'Learning target').toLowerCase(), 'missed', 'of', 'questions missed', 'wording'];
-    const out = [head.map(csvCell).join(',')];
+    const head = ['student', 'section', 'points', 'points possible', (a.byLabel || 'Learning target').toLowerCase(), 'missed', 'of', 'questions missed', 'wording', 'score source'];
+    const out = [head.map(downloadCell).join(',')];
     a.students.filter(s => s.took).forEach(s => {
       const base = [display(s, anon), anon ? '' : s.section, s.earned, s.possible];
-      if (!s.targetsMissed.length) out.push(base.concat(['(none)', 0, '', '', '']).map(csvCell).join(','));
+      if (!s.targetsMissed.length) out.push(base.concat(['(none)', 0, '', '', '', s.scoreSource]).map(downloadCell).join(','));
       s.targetsMissed.forEach(e => {
         const t = a.targets.find(x => x.lt === e.lt);
-        out.push(base.concat([e.lt, e.missed, e.of, e.questions.join(' '), t && !(anon && a.by === 'question') ? t.text : '']).map(csvCell).join(','));
+        out.push(base.concat([e.lt, e.missed, e.of, e.questions.join(' '), t && !(anon && a.by === 'question') ? t.text : '', s.scoreSource]).map(downloadCell).join(','));
       });
     });
     return out.join('\r\n') + '\r\n';
@@ -971,13 +1082,13 @@
     const classes = a.byClass || [];
     const head = [a.byLabel.toLowerCase(), 'wording', 'questions', 'percent correct', 'answers correct', 'answers counted', 'students to retake']
       .concat(classes.map(c => c.section + ' percent correct'));
-    const out = [head.map(csvCell).join(',')];
+    const out = [head.map(downloadCell).join(',')];
     const pc = p => (p == null ? '' : Math.round(p * 100));
     reportRows(a).forEach(t => {
       // Projector safe: a question's own wording is the test, so it stays out.
       const words = anon && a.by === 'question' ? '' : t.text;
       out.push([t.lt, words, t.questions.join(' '), pc(t.pct), t.correct, t.answered, t.needCount]
-        .concat(classes.map(c => pc((c.targets.find(x => x.lt === t.lt) || {}).pct))).map(csvCell).join(','));
+        .concat(classes.map(c => pc((c.targets.find(x => x.lt === t.lt) || {}).pct))).map(downloadCell).join(','));
     });
     return out.join('\r\n') + '\r\n';
   }
@@ -1001,26 +1112,28 @@
   function coverage(map, a) {
     const took = a.students.filter(s => s.took);
     const order = [];
-    a.questions.forEach(x => { if (!order.includes(x.q.lt)) order.push(x.q.lt); });
+    map.questions.forEach(q => { if (!order.includes(q.lt)) order.push(q.lt); });
     order.sort((p, q) => p.localeCompare(q, 'en', { numeric: true }));
     const words = map.targets || {};
     const cells = new Map(took.map(s => [s.key, {}]));
     const rows = order.map(lt => {
-      const qs = a.questions.filter(x => x.q.lt === lt).map(x => x.q.n);
-      const status = qs.length >= MIN_QUESTIONS ? 'tested' : 'thin';
+      const qs = map.questions.filter(q => q.lt === lt).map(q => q.n);
+      const missing = qs.filter(n => !a.questions.some(x => x.q.n === n));
+      const status = missing.length ? 'unmatched' : qs.length >= MIN_QUESTIONS ? 'tested' : 'thin';
       const shown = [];
       const notYet = [];
       const few = [];
       took.forEach(s => {
         const counted = s.results.filter(r => r.q.lt === lt && r.status !== 'absent' && r.status !== 'unknown');
         let cell;
-        if (status === 'thin' || counted.length < MIN_QUESTIONS) cell = 'few';
+        if (status === 'unmatched') cell = 'missing';
+        else if (status !== 'tested' || counted.length < MIN_QUESTIONS) cell = 'few';
         else cell = counted.every(r => r.status === 'correct') ? 'shown' : 'notyet';
         cells.get(s.key)[lt] = cell;
         (cell === 'shown' ? shown : cell === 'notyet' ? notYet : few).push(s.key);
       });
       const judged = shown.length + notYet.length;
-      return { lt, text: String(words[lt] || ''), questions: qs, status, shown, notYet, few, pct: judged ? shown.length / judged : null };
+      return { lt, text: String(words[lt] || ''), questions: qs, missing, status, shown, notYet, few, pct: judged ? shown.length / judged : null };
     });
     // Standards the map lists that this test never asked about (the Map Maker keeps every
     // standard the teacher pasted, tested or not).
@@ -1031,22 +1144,23 @@
       min: MIN_QUESTIONS, rows, untested,
       students: took.map(s => ({ key: s.key, n: s.n, cells: cells.get(s.key), shown: rows.filter(r => r.status === 'tested' && cells.get(s.key)[r.lt] === 'shown').length })),
       tested: rows.filter(r => r.status === 'tested').length,
+      unmatched: rows.filter(r => r.status === 'unmatched').length,
       thin: rows.filter(r => r.status === 'thin').length
     };
   }
   // One row per student, one column per standard, then a row for the class.
-  const CELL_WORD = { shown: 'shown', notyet: 'not yet', few: 'too few questions' };
+  const CELL_WORD = { shown: 'shown', notyet: 'not yet', few: 'too few questions', missing: 'missing imported questions' };
   function coverageCsv(cov, a, options) {
     const anon = !!(options && options.anon);
     const byKey = new Map(a.students.map(s => [s.key, s]));
     const cols = cov.rows;
-    const out = [['student', 'section', 'standards shown', 'standards tested'].concat(cols.map(r => r.lt)).map(csvCell).join(',')];
+    const out = [['student', 'section', 'standards shown', 'standards tested'].concat(cols.map(r => r.lt)).map(downloadCell).join(',')];
     cov.students.forEach(st => {
       const s = byKey.get(st.key);
-      out.push([display(s, anon), anon ? '' : s.section, st.shown, cov.tested].concat(cols.map(r => CELL_WORD[st.cells[r.lt]])).map(csvCell).join(','));
+      out.push([display(s, anon), anon ? '' : s.section, st.shown, cov.tested].concat(cols.map(r => CELL_WORD[st.cells[r.lt]])).map(downloadCell).join(','));
     });
-    out.push(['Class: students who showed it', '', '', ''].concat(cols.map(r => (r.status === 'tested' ? r.shown.length + ' of ' + (r.shown.length + r.notYet.length) : 'only ' + r.questions.length + ' question'))).map(csvCell).join(','));
-    cov.untested.forEach(r => out.push(['Not on this test: ' + r.lt, '', '', ''].concat(cols.map(() => '')).map(csvCell).join(',')));
+    out.push(['Class: students who showed it', '', '', ''].concat(cols.map(r => (r.status === 'tested' ? r.shown.length + ' of ' + (r.shown.length + r.notYet.length) : r.status === 'unmatched' ? 'missing imported questions' : 'only ' + r.questions.length + ' question'))).map(downloadCell).join(','));
+    cov.untested.forEach(r => out.push(['Not on this test: ' + r.lt, '', '', ''].concat(cols.map(() => '')).map(downloadCell).join(',')));
     return out.join('\r\n') + '\r\n';
   }
 
@@ -1060,7 +1174,8 @@
   // the same idea without asking the same question.
   const STYLES = ['retake', 'corrections'];
   function missedFor(a, s) {
-    return s.results.filter(r => r.status === 'wrong' || r.status === 'blank').map(r => {
+    const eligible = new Set(s.targetsMissed.map(t => t.lt));
+    return s.results.filter(r => (r.status === 'wrong' || r.status === 'blank') && eligible.has(groupKey(a.by, r.q))).map(r => {
       const key = groupKey(a.by, r.q);
       const t = a.targets.find(x => x.lt === key);
       return { r, key, words: t ? t.text : '', lt: r.q.lt, ltWords: (t && t.within.find(w => w.lt === r.q.lt) || {}).text || '' };

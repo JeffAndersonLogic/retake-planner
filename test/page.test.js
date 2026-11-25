@@ -30,7 +30,7 @@
  *   - no console error and no security-policy violation;
  *   - it fits a phone without sideways scrolling.
  *
- *   npm i --no-save playwright-core
+ *   npm ci
  *   npm run test:browser
  */
 'use strict';
@@ -42,7 +42,7 @@ const path = require('path');
 let chromium;
 try { ({ chromium } = require('playwright-core')); }
 catch (e) {
-  console.error('This test needs playwright-core. Install it first:\n  npm i --no-save playwright-core');
+  console.error('This test needs the pinned playwright-core dependency. Install it first:\n  npm ci');
   process.exit(2);
 }
 
@@ -244,13 +244,21 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(/[A-Z][a-z]+ Demo/.test(await allResultsText()), 'the name check cannot fail');
   });
 
-  await check('"missed most" never lists more students than "missed any"', async () => {
+  await check('the retake count and individual/class prompts follow the selected rule', async () => {
     const any = Number(await page.locator('#s-retake').innerText());
     await page.click('#rule button[data-v="most"]');
     const most = Number(await page.locator('#s-retake').innerText());
     assert(most <= any, most + ' > ' + any);
     assert(any > 0, 'the demo should have students to retake');
+    await page.click('#tab-prompts');
+    assert(await page.locator('#view-prompts .prompt').count() === most, 'prompts must agree with the retake counter');
+    assert(/3 questions missed/.test(await page.locator('#view-prompts .prompt .target-head').innerText()), 'the card must count only qualifying misses, not all four');
+    await page.click('#copy-class');
+    const classText = await page.evaluate(() => navigator.clipboard.readText());
+    assert((classText.match(/^=== Student /gm) || []).length === most, 'the class prompt must use the same students');
     await page.click('#rule button[data-v="any"]');
+    assert(await page.locator('#view-prompts .prompt').count() === any, 'negative control: the looser rule has more prompts');
+    await page.click('#tab-targets');
   });
 
   await check('the downloaded plan has one row per student per target', async () => {
@@ -393,7 +401,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     // A map file brought in replaces it, and the Map Maker steps aside.
     await page.setInputFiles('#filepick', [fx.mapFile]);
     await page.waitForFunction(() => /Fixture-Retake-Map/.test(document.getElementById('f-map-state').textContent));
-    assert(await page.locator('#maker').isHidden(), 'a loaded map file needs no Map Maker');
+    assert(await page.locator('#maker').isVisible(), 'a loaded map can be edited in Map Maker');
   });
 
   await check('class periods: one file each, named, compared, filtered and sorted', async () => {
@@ -469,6 +477,100 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await page.click('#sort button[data-v="score"]');
     assert(/sorted by score, lowest first/.test(await page.locator('#view-heat .sort-note').textContent()), 'the sort is said');
     await page.click('#sort button[data-v="class"]');
+  });
+
+  const inventedUpload = (name, rows) => ({ name, mimeType: 'text/csv', buffer: Buffer.from(rows.map(r => r.map(E.csvCell).join(',')).join('\n')) });
+
+  await check('import review separates actual Canvas totals from supported-item analysis', async () => {
+    await page.click('#clear');
+    const data = inventedUpload('Invented weighted export.csv', [
+      ['Name', 'ID', 'ItemID', 'ItemType', 'Invented one-point item?', 'EarnedPoints', 'Status', 'ItemID', 'ItemType', 'Invented five-point item?', 'EarnedPoints', 'Status', 'ItemID', 'ItemType', 'Invented essay?', 'EarnedPoints', 'Status', 'PointsPossible', 'OverallScore'],
+      ['Pat Invented', '1', 'a', 'MultipleChoice', 'Invented first answer', '1', 'Correct', 'b', 'MultipleChoice', 'Invented second answer', '0', 'Incorrect', 'c', 'Essay', 'Invented essay response', '0', 'Graded', '8', '1']
+    ]);
+    await page.setInputFiles('#filepick', data);
+    await page.waitForSelector('#results:not([hidden])');
+    const review = await page.locator('#import-summary').innerText();
+    assert(/2 questions analyzed; 1 unsupported/.test(review), review);
+    assert(/Canvas overall totals/.test(review), review);
+    await page.click('#tab-students');
+    assert(/1 \/ 8/.test(await page.locator('#view-students').innerText()), 'the actual exported total must show');
+    assert(await page.locator('#view-heat tbody td.cell').count() === 2, 'the essay must not appear in the heat map');
+    // Negative control: with no supplied total, the source is explicitly estimated.
+    const rows = E.parseCsv(data.buffer.toString());
+    rows[1][rows[1].length - 1] = '';
+    rows[1][rows[1].length - 2] = '';
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', inventedUpload('Invented missing total.csv', rows));
+    await page.waitForSelector('#results:not([hidden])');
+    assert(/estimated item totals/.test(await page.locator('#import-summary').innerText()), 'estimated scores need a label');
+  });
+
+  await check('ambiguous matches stop and the teacher can return to Canvas-only analysis', async () => {
+    await page.click('#clear');
+    const stem = 'Which invented statement is true?';
+    const map = { format: E.MAP_FORMAT, title: 'Invented ambiguous map', targets: { T: 'Invented standard' },
+      questions: [1, 2].map(n => ({ n, lt: 'T', stem, options: ['Yes', 'No'], answer: 0 })) };
+    await page.setInputFiles('#filepick', [
+      inventedUpload('Invented ambiguous.csv', [['Name', 'ID', 'ItemID', 'ItemType', stem, 'EarnedPoints', 'Status', 'ItemID', 'ItemType', stem, 'EarnedPoints', 'Status'],
+        ['Pat Invented', '1', 'a', 'MultipleChoice', 'Yes', '1', 'Correct', 'b', 'MultipleChoice', 'No', '0', 'Incorrect']]),
+      { name: 'Invented-Map.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(map)) }
+    ]);
+    await page.waitForFunction(() => /uncertain matches/.test(document.getElementById('status').textContent));
+    assert(await page.locator('#results').isHidden(), 'ambiguous identities cannot make an authoritative report');
+    await page.click('#remove-map');
+    await page.waitForSelector('#results:not([hidden])');
+    assert(/2 questions analyzed/.test(await page.locator('#import-summary').innerText()), 'raw scored questions remain usable without claiming identity');
+  });
+
+  await check('a loaded map is editable, keeps numbering and survives repeated use and save', async () => {
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', [fx.csvFile, fx.mapFile]);
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#maker summary');
+    await page.fill('#maker-version', 'audit.1');
+    await page.getByLabel('Correct answer for question 1', { exact: true }).fill('Invented corrected answer');
+    await page.getByLabel('Standard for question 1', { exact: true }).fill('X.NEW');
+    await page.click('#maker-use');
+    assert(/Matched 6 of 6/.test(await page.locator('#status').innerText()), 'updated map still matches');
+    await page.click('#maker-use');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#maker-save')]);
+    const pm = E.parseMap(fs.readFileSync(await dl.path(), 'utf8'));
+    assert(pm.map, pm.problems.join('; '));
+    assert(pm.map.version === 'audit.1', 'the version survives');
+    const q = pm.map.questions.find(x => x.n === 1);
+    assert(q.lt === 'X.NEW' && q.options[q.answer] === 'Invented corrected answer', 'both edits survive');
+    assert(q.rationale === 'Fixture reason 1', 'authored metadata survives');
+    assert(pm.map.questions.length === 6, 'no question was silently dropped');
+  });
+
+  await check('a universally blank item can be tagged, used and saved', async () => {
+    await page.click('#clear');
+    await page.setInputFiles('#filepick', inventedUpload('Invented blank.csv', [
+      ['Name', 'ID', 'ItemID', 'ItemType', 'Which invented item was left blank?', 'EarnedPoints', 'Status'],
+      ['Pat Invented', '1', 'blank-item', 'MultipleChoice', '', '0', 'Graded']
+    ]));
+    await page.waitForSelector('#maker:not([hidden])');
+    await page.click('#maker summary');
+    await page.getByLabel('Standard for question 1', { exact: true }).fill('T.BLANK');
+    await page.click('#maker-use');
+    assert(/Matched 1 of 1/.test(await page.locator('#status').innerText()), 'the blank item remains in the analysis');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#maker-save')]);
+    const pm = E.parseMap(fs.readFileSync(await dl.path(), 'utf8'));
+    assert(pm.map && pm.map.questions[0].answer === -1, 'unknown answers are saved without guessing');
+  });
+
+  await check('overlapping exports are blocked until the extra file is removed', async () => {
+    await page.click('#clear');
+    const header = ['Name', 'ID', 'ItemID', 'ItemType', 'Which invented item belongs here?', 'EarnedPoints', 'Status'];
+    await page.setInputFiles('#filepick', [
+      inventedUpload('Invented first.csv', [header, ['Pat Invented', '1', 'q', 'MultipleChoice', 'Invented answer', '1', 'Correct']]),
+      inventedUpload('Invented second.csv', [header, ['Pat Invented', '1', 'q', 'MultipleChoice', 'Invented different answer', '0', 'Incorrect']])
+    ]);
+    await page.waitForFunction(() => /overlapping students/.test(document.getElementById('status').textContent));
+    assert(await page.locator('#results').isHidden(), 'no doubled class report');
+    await page.locator('#class-files button.remove').nth(1).click();
+    await page.waitForSelector('#results:not([hidden])');
+    assert(await page.locator('#s-students').innerText() === '1', 'one source restores the valid analysis');
   });
 
   await check('the page asks for this version\'s own script and styles, so a browser cannot keep last version\'s', async () => {
