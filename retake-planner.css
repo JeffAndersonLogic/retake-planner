@@ -247,3 +247,9 @@ table.compare tr.avg th,table.compare tr.avg td{background:var(--inset);font-wei
 .sheet .sheet-label{font-size:11px;color:#555}
 .sheet .sheet-lines{display:block;height:126px;margin-top:6px;background:repeating-linear-gradient(to bottom,transparent 0 20px,#bbb 20px 21px)}
 @media print{.handout-tools textarea,.handout-tools .row,#handout-status{display:none!important}.handout{border:0;padding:0;break-after:page}.handout .target-head{display:none}.sheet{border:0;padding:0}}
+
+/* the MagicSchool button (2026-11-27): MagicSchool's own wordmark, unedited, on paper
+   with a purple edge; the wordmark is decoration, the words say what the button does */
+.btn.ms{display:inline-flex;align-items:center;gap:8px;background:#fff;border-color:#7C3AED;color:var(--steel);padding:7px 14px}
+.btn.ms:hover{border-color:#5B21B6;box-shadow:0 0 0 2px rgba(124,58,237,.15)}
+.btn.ms img{height:12px;width:auto;display:block}

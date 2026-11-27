@@ -12,6 +12,8 @@
  *   - the heat map has one row per student and one right-or-wrong square per question,
  *     and its wrong squares agree with By student; the class report groups by topic,
  *     and by learning target when asked;
+ *   - Copy & open Raina puts the prompt on the clipboard and opens MagicSchool's Raina
+ *     (a stand-in page: MagicSchool is never contacted), with its logo loaded;
  *   - the retake prompts: one per student who missed something, no names in any,
  *     the question count honoured, hidden on the projector, and the class prompt
  *     reaches the clipboard;
@@ -349,6 +351,34 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-classes.png'), fullPage: true });
   });
 
+  await check('Copy & open Raina: the prompt goes on the clipboard, Raina opens in a new tab, the logo loads', async () => {
+    await page.click('#clear');
+    await page.click('#demo');
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#tab-prompts');
+    // MagicSchool is never really contacted by the test.
+    await ctx.route('https://app.magicschool.ai/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>stand-in</title>' }));
+    const card = page.locator('#view-prompts .prompt').first();
+    const logo = await card.locator('.copy-raina img').evaluate(i => i.complete && i.naturalWidth > 0);
+    assert(logo, 'the MagicSchool logo did not load');
+    const expected = await card.locator('pre.prompt-text').textContent();
+    await page.evaluate(() => navigator.clipboard.writeText('before'));
+    const [popup] = await Promise.all([ctx.waitForEvent('page', { timeout: 5000 }), card.locator('.copy-raina').click()]);
+    assert(popup.url() === 'https://app.magicschool.ai/raina', 'opened ' + popup.url());
+    assert(await page.evaluate(() => navigator.clipboard.readText()) === expected, 'the prompt was not on the clipboard');
+    await popup.close();
+    // Negative control: plain Copy prompt copies and opens nothing.
+    let opened = false;
+    const onPage = () => { opened = true; };
+    ctx.on('page', onPage);
+    await card.locator('.copy-one').click();
+    await page.waitForTimeout(500);
+    ctx.off('page', onPage);
+    assert(!opened, 'Copy prompt opened a tab');
+    await ctx.unroute('https://app.magicschool.ai/**');
+    await page.click('#tab-heat');
+  });
+
   await check('student copies: the AI\'s answer pasted back becomes a named handout per student, copied for Word', async () => {
     await page.click('#clear');
     await page.click('#demo');
@@ -424,7 +454,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const own = new Set(['/index.html', '/retake-planner.css', '/retake-planner-engine.js', '/retake-planner-app.js',
       '/assets/fonts/andersonlogic/manrope-latin-var.woff2', '/assets/fonts/andersonlogic/inter-latin-var.woff2',
       '/assets/images/brand/andersonlogic/al-logo-mark.png', '/assets/images/brand/andersonlogic/al-logo-wordmark.png',
-      '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png']);
+      '/assets/images/brand/andersonlogic/al-logo-lockup.png', '/assets/images/brand/andersonlogic/al-favicon.png',
+      '/assets/images/partners/magicschool-logo.png']);
     const stray = requests.filter(u => !u.startsWith('data:') && !u.startsWith('blob:') && !own.has(u.replace(origin, '').replace(/\?v=[\d.]+$/, '')));
     assert(!stray.length, 'unexpected requests: ' + stray.join(', '));
     // Negative control: a fetch from the page is refused by its policy and recorded.

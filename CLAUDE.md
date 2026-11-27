@@ -18,7 +18,10 @@ AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository hold
 - **Projector safe** hides names and every question, answer, rationale and prompt.
 - It reads results and never feeds a grade.
 - **A retake prompt never carries a student's name or id**, only "Student N". The page writes the
-  prompt; the teacher pastes it into their own AI. The page never contacts an AI.
+  prompt; the teacher pastes it into their own AI. The page never contacts an AI. Copy & open
+  Raina only copies the prompt and opens https://app.magicschool.ai/raina in a new tab.
+- **Partner logos** (`assets/images/partners/`) are the owner's artwork, unedited, with their
+  source in that folder's README.
 - **Projector safe also hides the retake prompts**: they hold the test's questions and answers.
 - Writing: no em dashes or en dashes in running prose.
 

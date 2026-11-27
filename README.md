@@ -23,8 +23,9 @@ It reads results. It does not grade. Canvas holds every grade.
    - **By student:** each student's score, what they missed, and the wrong answer they chose.
    - **By question:** percent correct and the most-chosen wrong answer, which usually names
      the misunderstanding to reteach.
-   - **Retake questions:** a prompt per student (or one for the whole class) to paste into the
-     AI your school allows. Choose **New retake questions** and how many per student, or
+   - **Retake questions:** a prompt per student (or one for the whole class). **Copy & open Raina**
+     (the button with the MagicSchool logo) copies a student's prompt and opens MagicSchool's Raina
+     in a new tab, where you press Ctrl+V (Mac: Cmd+V) and send. **Copy prompt** is for any other AI. Choose **New retake questions** and how many per student, or
      **Test corrections**. The AI writes open-ended questions on what each student missed;
      read and edit them before a student sees them.
    - **Same retake:** students who missed exactly the same topics.
@@ -75,7 +76,9 @@ reads back. Teacher notes never reach a student copy.
 
 ### The retake prompts and privacy
 
-The page never contacts an AI. It writes text; the teacher copies it into their own AI. A prompt
+The page never contacts an AI. It writes text; the teacher copies it into their own AI. The Copy &
+open Raina button only puts the prompt on the clipboard and opens MagicSchool's own page in a new
+tab; MagicSchool offers no way to pass text in, so nothing is sent until the teacher pastes. A prompt
 never carries a student's name or id: students are numbered ("Student 3"), and the same number
 is used on every view, so the teacher can match the AI's answer back to the student. A prompt
 does carry the missed questions, the answer chosen and the correct answer, because that is what

@@ -15,6 +15,9 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pct = x => (x == null ? 'n/a' : Math.round(x * 100) + '%');
+  // MagicSchool's chatbot for educators. Raina wrote better retake questions than the
+  // Custom Chatbot in Jeff's side-by-side test (2026-11-27).
+  const RAINA = 'https://app.magicschool.ai/raina';
 
   const state = {
     exports: [], mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
@@ -413,16 +416,40 @@
     }
     const opts = { style: state.style, count: state.count };
     const withMisses = ordered(a).filter(s => E.retakePrompt(a, s, opts));
-    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li>Copy a student\'s prompt, or one prompt for the whole class.</li><li>Paste it into the AI your school allows (ChatGPT, Claude, Gemini, MagicSchool and others all work).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
+    let h = '<p class="muted small intro sort-note">' + sortNote(a) + '</p><ol class="howto"><li><b>Copy &amp; open Raina</b> copies a student\'s prompt and opens MagicSchool\'s Raina in a new tab: press Ctrl+V (Mac: Cmd+V) there and send. <b>Copy prompt</b> is for any other AI (ChatGPT, Claude, Gemini and others).</li><li>Read and edit what it writes before any student sees it. The prompt carries no student names; it uses the student numbers shown here.</li></ol>';
     if (!withMisses.length) { $('prompt-list').innerHTML = h + '<p class="empty">Nobody missed anything, so there is nothing to retake.</p>'; return; }
     h += '<div class="prompts">' + withMisses.map(s => {
       const text = E.retakePrompt(a, s, opts);
       const missed = s.results.filter(r => r.status === 'wrong' || r.status === 'blank').length;
       return '<article class="prompt" data-student="' + esc(s.key) + '"><div class="target-head"><span class="lt">Student ' + s.n + (s.name && s.name !== 'Student ' + s.n ? ' · ' + esc(s.name) : '') + '</span><span class="muted small">' + missed + ' question' + (missed === 1 ? '' : 's') + ' missed'
         + (a.keyless ? '' : ' · ' + esc(s.targetsMissed.map(e => e.lt).join(', '))) + '</span></div>'
-        + '<div class="row"><button class="btn primary copy-one" type="button">Copy prompt</button><details><summary>Show the prompt</summary><pre class="prompt-text" tabindex="0">' + esc(text) + '</pre></details></div></article>';
+        + '<div class="row"><button class="btn ms copy-raina" type="button" aria-label="Copy the prompt and open MagicSchool Raina in a new tab"><img src="assets/images/partners/magicschool-logo.png" width="792" height="96" alt=""><span>Copy &amp; open Raina</span></button>'
+        + '<button class="btn copy-one" type="button">Copy prompt</button><details><summary>Show the prompt</summary><pre class="prompt-text" tabindex="0">' + esc(text) + '</pre></details></div></article>';
     }).join('') + '</div>';
     $('prompt-list').innerHTML = h;
+    // MagicSchool documents no way to open Raina with text filled in, so the prompt
+    // goes on the clipboard first and Raina opens second; the teacher pastes. The
+    // page itself sends nothing: the new tab is MagicSchool's own page (Jeff, 2026-11-27).
+    $('prompt-list').querySelectorAll('.copy-raina').forEach(btn => btn.addEventListener('click', async () => {
+      const pre = btn.closest('.prompt').querySelector('.prompt-text');
+      const label = btn.querySelector('span');
+      try {
+        await navigator.clipboard.writeText(pre.textContent);
+      } catch (e) {
+        // No clipboard: select the prompt to copy by hand, and do not open Raina empty.
+        const d = pre.closest('details');
+        if (d) d.open = true;
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        flash(label, 'Selected: press Ctrl+C');
+        return;
+      }
+      window.open(RAINA, '_blank', 'noopener');
+      flash(label, 'Copied: paste in Raina');
+    }));
     $('prompt-list').querySelectorAll('.copy-one').forEach(btn => btn.addEventListener('click', () => {
       const pre = btn.closest('.prompt').querySelector('.prompt-text');
       copyText(pre.textContent, btn, pre);
