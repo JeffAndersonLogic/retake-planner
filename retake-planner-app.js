@@ -18,7 +18,7 @@
 
   const state = {
     exports: [], mapText: null, mapName: '', rule: 'any', anon: false, section: '', tab: 'heat', demo: false,
-    by: 'topic', style: 'retake', count: 3, sort: 'class'
+    by: 'topic', style: 'retake', count: 3, sort: 'class', aiText: '', aiWho: '', made: false
   };
   let model = null; // { map, exp, matched, analysis }
 
@@ -405,6 +405,8 @@
   function drawPrompts(a) {
     $('count-wrap').hidden = state.style !== 'retake';
     $('prompt-tools').hidden = state.anon;
+    $('handout-tools').hidden = state.anon;
+    drawHandouts(a);
     if (state.anon) {
       $('prompt-list').innerHTML = '<p class="empty">Retake prompts are hidden on the projector: they hold the test\'s questions and answers. Turn Projector safe off to see them.</p>';
       return;
@@ -425,6 +427,58 @@
       const pre = btn.closest('.prompt').querySelector('.prompt-text');
       copyText(pre.textContent, btn, pre);
     }));
+  }
+
+  // Student copies (Jeff, 2026-11-27): the AI's answer pasted back, reduced to the
+  // student copies, each with the student's name added here and never sent anywhere.
+  function drawHandouts(a) {
+    // On the projector nothing here is drawn at all: the copies hold names and questions.
+    if (state.anon) { $('ai-who').innerHTML = ''; $('handouts').innerHTML = ''; $('handout-status').innerHTML = ''; model.handouts = null; return; }
+    const opts = { style: state.style, count: state.count };
+    const people = ordered(a).filter(s => E.retakePrompt(a, s, opts));
+    $('ai-who').innerHTML = '<option value="">Read the student numbers in it</option>'
+      + people.map(s => '<option value="' + s.n + '"' + (String(s.n) === state.aiWho ? ' selected' : '') + '>Student ' + s.n + (s.name && !/^Student \d+$/.test(s.name) ? ' · ' + esc(s.name) : '') + '</option>').join('');
+    const list = $('handouts');
+    if (!state.made || !state.aiText.trim()) { list.innerHTML = ''; $('handout-status').innerHTML = ''; $('copy-handouts').hidden = true; $('clear-handouts').hidden = !state.aiText; model.handouts = null; return; }
+    const parsed = E.parseAiAnswer(state.aiText, { n: state.aiWho || null });
+    const byN = new Map((a.everyone || a.students).map(s => [s.n, s]));
+    const items = parsed.students.map(x => {
+      const st = byN.get(x.n);
+      const name = st && st.name && !/^Row \d+$/.test(st.name) && !/, Row \d+$/.test(st.name) ? st.name : '';
+      return { n: x.n, name, known: !!st, questions: x.questions };
+    });
+    const problems = parsed.problems.concat(items.filter(x => !x.known).map(x => 'Student ' + x.n + ' is not in these results, so no name was added.'));
+    const title = model.map.title || 'Test';
+    model.handouts = { items, title, style: state.style };
+    $('handout-status').innerHTML = (items.length ? '<div class="notice ok">Made <b>' + items.length + ' student cop' + (items.length === 1 ? 'y' : 'ies') + '</b>. Check each one before it goes to a student.</div>' : '')
+      + (problems.length ? '<div class="notice warn"><ul>' + problems.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul></div>' : '');
+    $('copy-handouts').hidden = items.length < 2;
+    $('clear-handouts').hidden = false;
+    const doc = E.handouts([], { title, style: state.style });
+    list.innerHTML = items.map((x, i) => '<article class="handout" data-i="' + i + '"><div class="target-head"><span class="lt">Student ' + x.n + (x.name ? ' · ' + esc(x.name) : '') + '</span>'
+      + '<button class="btn primary copy-handout" type="button">Copy for Word</button></div>'
+      + '<div class="sheet"><p class="sheet-title">' + esc(doc.title) + '</p><p>Name: ' + (x.name ? '<b>' + esc(x.name) + '</b>' : '______________________') + ' &nbsp; Date: __________</p><p class="sheet-dir">' + esc(doc.directions) + '</p>'
+      + '<ol>' + x.questions.map(q => '<li>' + (q.label ? '<span class="sheet-label">[' + esc(q.label) + ']</span> ' : '') + esc(q.text) + '<span class="sheet-lines" aria-hidden="true"></span></li>').join('') + '</ol></div></article>').join('');
+    list.querySelectorAll('.copy-handout').forEach(btn => btn.addEventListener('click', () => {
+      const x = model.handouts.items[Number(btn.closest('.handout').dataset.i)];
+      copyRich(E.handouts([x], { title, style: state.style }), btn, btn.closest('.handout').querySelector('.sheet'));
+    }));
+  }
+  // Word takes formatting from the clipboard's HTML. Where the browser will not
+  // write HTML, the handout on screen is selected so Ctrl+C copies it, formatting and all.
+  async function copyRich(doc, btn, node) {
+    try {
+      if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('no rich clipboard');
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([doc.html], { type: 'text/html' }), 'text/plain': new Blob([doc.text], { type: 'text/plain' }) })]);
+      flash(btn, 'Copied');
+    } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      flash(btn, 'Selected: press Ctrl+C');
+    }
   }
 
   function drawGroups(a) {
@@ -490,7 +544,8 @@
     rebuild();
   });
   $('clear').addEventListener('click', () => {
-    Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false });
+    Object.assign(state, { exports: [], mapText: null, mapName: '', section: '', demo: false, aiText: '', aiWho: '', made: false });
+    $('ai-answer').value = '';
     model = null;
     $('status').innerHTML = '';
     hideResults();
@@ -524,6 +579,14 @@
   $('copy').addEventListener('click', () => {
     if (!model || !model.analysis) return;
     copyText(E.planText(model.analysis, { anon: state.anon }), $('copy'));
+  });
+  $('ai-answer').addEventListener('input', e => { state.aiText = e.target.value; });
+  $('ai-who').addEventListener('change', e => { state.aiWho = e.target.value; if (state.made) draw(); });
+  $('make-handouts').addEventListener('click', () => { state.aiText = $('ai-answer').value; state.made = true; draw(); });
+  $('clear-handouts').addEventListener('click', () => { state.aiText = ''; state.made = false; $('ai-answer').value = ''; draw(); });
+  $('copy-handouts').addEventListener('click', () => {
+    if (!model || !model.handouts) return;
+    copyRich(E.handouts(model.handouts.items, { title: model.handouts.title, style: model.handouts.style }), $('copy-handouts'), $('handouts'));
   });
   $('copy-class').addEventListener('click', () => {
     if (!model || !model.analysis || state.anon) return;

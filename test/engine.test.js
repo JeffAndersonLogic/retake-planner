@@ -535,5 +535,73 @@ ok('accents and quotes scrambled by Excel are repaired; untouched text is left a
   assert.strictEqual(E.readExport(mixed).students[0].name, 'Li 李', 'text Windows-1252 cannot hold is never re-read');
 });
 
+/* ── 2026-11-27: student copies ────────────────────────────────────────── */
+
+// An answer the way chat AIs write one: Markdown headings and bold numbers, teacher
+// notes in between, and a strong-answer note that strayed into a student copy.
+const AI_ANSWER = [
+  'Here are the retake questions!', '',
+  '### === STUDENT COPY: Student 2 ===',
+  '**1.** [Topic Z.1] Explain one way the first idea changed things.',
+  '**2.** [Topic Z.2] Compare the two cases',
+  'using one example from each.', '',
+  '### === TEACHER NOTES: Student 2 ===',
+  '1. What a strong answer includes:', '- names the SECRET-NOTE change', '',
+  '**=== STUDENT COPY: Student 4 ===**',
+  '1. (Topic Z.1) Describe the second idea.',
+  '   - What a strong answer includes: SECRET-NOTE two',
+  '2. What caused the change?',
+  '=== TEACHER NOTES: Student 4 ===', '1. SECRET-NOTE three'
+].join('\n');
+
+ok('a retake prompt asks for a student copy and teacher notes under fixed headings, with topic labels', () => {
+  const { a } = run(wide(), {}, topicMap());
+  const ben = a.students.find(s => s.name === 'Ben Invented');
+  const p = E.retakePrompt(a, ben, {});
+  assert.ok(p.includes('=== STUDENT COPY: Student ' + ben.n + ' ==='), 'student copy heading');
+  assert.ok(p.includes('=== TEACHER NOTES: Student ' + ben.n + ' ==='), 'teacher notes heading');
+  assert.ok(/in square brackets.*\[Topic Z\.1\]/.test(p), 'topic label asked for');
+  const all = E.classPrompt(a, {});
+  assert.ok(all.includes('=== STUDENT COPY: Student N ===') && /N is the student's number/.test(all));
+  const k = E.mapFromExport(E.readExport(wide()));
+  const keyless = E.analyze(k.map, E.readExport(wide()), k.matched, {});
+  assert.ok(!/square brackets/.test(E.retakePrompt(keyless, keyless.students[1], {})), 'negative control: no topic label without a map');
+});
+
+ok('the AI\'s answer: only the student copies, numbered questions and labels, no teacher notes', () => {
+  const r = E.parseAiAnswer(AI_ANSWER);
+  assert.deepStrictEqual(r.problems, []);
+  assert.deepStrictEqual(r.students.map(x => x.n), [2, 4]);
+  assert.deepStrictEqual(r.students[0].questions, [
+    { text: 'Explain one way the first idea changed things.', label: 'Topic Z.1' },
+    { text: 'Compare the two cases using one example from each.', label: 'Topic Z.2' }]);
+  assert.deepStrictEqual(r.students[1].questions.map(q => q.label + '|' + q.text), ['Topic Z.1|Describe the second idea.', '|What caused the change?']);
+  assert.ok(!JSON.stringify(r).includes('SECRET-NOTE'), 'a teacher note reached a student copy');
+  assert.ok(JSON.stringify(E.parseAiAnswer(AI_ANSWER.replace(/STUDENT COPY/g, 'TEACHER NOTES'))).indexOf('SECRET') < 0, 'teacher sections are never kept');
+});
+
+ok('an answer with no headings needs to be told whose it is', () => {
+  const bare = '1. Explain the first idea.\n2. Compare the two cases.\n\nWhat a strong answer includes: SECRET-NOTE';
+  const none = E.parseAiAnswer(bare);
+  assert.strictEqual(none.students.length, 0);
+  assert.ok(/No "STUDENT COPY/.test(none.problems[0]), 'negative control: not guessed at');
+  const told = E.parseAiAnswer(bare, { n: 3 });
+  assert.deepStrictEqual(told.students.map(x => x.n + ':' + x.questions.length), ['3:2']);
+  assert.ok(!JSON.stringify(told).includes('SECRET'));
+});
+
+ok('a handout: title, name, date, directions, labels, writing lines; one page per student; escaped', () => {
+  const r = E.parseAiAnswer(AI_ANSWER);
+  const docs = E.handouts([{ name: 'Ann <script>x</script>', n: 2, questions: r.students[0].questions }, { name: '', n: 4, questions: r.students[1].questions }],
+    { title: 'Invented Test', style: 'retake', lines: 4 });
+  assert.ok(docs.html.includes('Invented Test: Retake'));
+  assert.ok(docs.html.includes('Ann &lt;script&gt;x&lt;/script&gt;') && !docs.html.includes('<script>'), 'a name is escaped');
+  assert.strictEqual((docs.html.match(/page-break-before:always/g) || []).length, 1, 'two students, one page break');
+  assert.strictEqual((docs.html.match(/_{78}/g) || []).length, 4 * 4, 'four lines under each of four questions');
+  assert.ok(docs.html.includes('[Topic Z.2]') && docs.html.includes('Date:') && /short paragraph/.test(docs.html));
+  assert.ok(/Name: _{10,}/.test(docs.text), 'no name: a line to write it on');
+  assert.ok(/Test Corrections/.test(E.handouts([{ n: 1, questions: [{ text: 'x', label: '' }] }], { title: 'T', style: 'corrections' }).html));
+});
+
 console.log(failed ? `\n${failed} failed` : '\nAll checks passed.');
 process.exit(failed ? 1 : 0);

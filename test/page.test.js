@@ -349,6 +349,39 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-classes.png'), fullPage: true });
   });
 
+  await check('student copies: the AI\'s answer pasted back becomes a named handout per student, copied for Word', async () => {
+    await page.click('#clear');
+    await page.click('#demo');
+    await page.waitForSelector('#results:not([hidden])');
+    await page.click('#tab-prompts');
+    const cards = await page.$$eval('#view-prompts .prompt .lt', els => els.slice(0, 2).map(e => e.textContent));
+    const who = cards.map(c => ({ n: Number(/Student (\d+)/.exec(c)[1]), name: c.split(' · ')[1] }));
+    const answer = who.map(w => '### === STUDENT COPY: Student ' + w.n + ' ===\n**1.** [Topic D.1] Invented question one for ' + w.n + '.\n2. Invented question two.\n\n=== TEACHER NOTES: Student ' + w.n + ' ===\n1. What a strong answer includes: TEACHER-ONLY').join('\n\n');
+    await page.fill('#ai-answer', answer);
+    await page.click('#make-handouts');
+    assert(await page.locator('#handouts .handout').count() === 2, 'two student copies');
+    const shown = await page.$$eval('#handouts .handout .lt', els => els.map(e => e.textContent));
+    who.forEach((w, i) => assert(shown[i] === 'Student ' + w.n + ' · ' + w.name, 'name added: ' + shown[i]));
+    assert(!/TEACHER-ONLY/.test(await page.locator('#handouts').textContent()), 'a teacher note reached a student copy');
+    await page.click('#copy-handouts');
+    // The copy finishes after the click returns; the button says which way it went.
+    await page.waitForFunction(() => /Copied|Selected/.test(document.getElementById('copy-handouts').textContent));
+    assert(await page.locator('#copy-handouts').textContent() === 'Copied', 'the formatted copy fell back to selecting');
+    const html = await page.evaluate(async () => { const items = await navigator.clipboard.read(); const b = await items[0].getType('text/html'); return b.text(); });
+    who.forEach(w => assert(html.includes(w.name), 'the copy names ' + w.name));
+    assert(/page-break-before:always/.test(html) && /\[Topic D\.1\]/.test(html) && !/TEACHER-ONLY/.test(html), 'Word copy: one page each, labels, no teacher notes');
+    // Projector safe: no copy, no name.
+    await page.click('#names button[data-v="anon"]');
+    const text = await allResultsText();
+    assert(!who.some(w => text.includes(w.name)), 'a name stayed on the projector');
+    assert(await page.locator('#handouts .handout').count() === 0, 'copies hidden on the projector');
+    await page.click('#names button[data-v="show"]');
+    assert(await page.locator('#handouts .handout').count() === 2, 'negative control: the copies come back');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'retake-handouts.png'), fullPage: true });
+    await page.click('#clear-handouts');
+    await page.click('#tab-heat');
+  });
+
   await check('every student list follows the sort and says how it is sorted', async () => {
     await page.click('#clear');
     await page.click('#demo');

@@ -11,7 +11,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <title>Retake Planner | ANDERSONLOGIC ai</title>
-<link rel="stylesheet" href="retake-planner.css?v=1.2.1">
+<link rel="stylesheet" href="retake-planner.css?v=1.3.0">
 <link rel="icon" type="image/png" href="assets/images/brand/andersonlogic/al-favicon.png">
 </head>
 <body>
@@ -110,6 +110,20 @@
           <div class="right"><button class="btn primary" type="button" id="copy-class">Copy one prompt for the whole class</button></div>
         </div>
         <div id="prompt-list"></div>
+        <section class="handout-tools" id="handout-tools" aria-labelledby="handout-title">
+          <h3 id="handout-title">Student copies</h3>
+          <p class="muted small">Paste the AI's answer here, for one student or the whole class. The planner keeps only the STUDENT COPY parts, adds each student's name on this computer, and makes one page per student to copy into Word.</p>
+          <label class="sr-only" for="ai-answer">The AI's answer</label>
+          <textarea id="ai-answer" rows="8" placeholder="Paste the AI's whole answer here, headings included."></textarea>
+          <div class="row">
+            <label class="ctl-label" for="ai-who">Whose answer</label><select class="sel" id="ai-who"></select>
+            <button class="btn primary" type="button" id="make-handouts">Make student copies</button>
+            <button class="btn" type="button" id="copy-handouts" hidden>Copy all for Word</button>
+            <button class="btn" type="button" id="clear-handouts" hidden>Clear</button>
+          </div>
+          <div id="handout-status" role="status"></div>
+          <div id="handouts" class="handouts"></div>
+        </section>
       </div>
       <div role="tabpanel" id="view-groups" aria-labelledby="tab-groups" hidden></div>
     </section>
@@ -118,7 +132,7 @@
 <footer><div class="wrap">Retake Planner by <span class="al-wordmark">ANDERSON<i>LOGIC</i> <span class="ai">ai</span></span>. It reads results to plan retakes. Nothing on this page is used for a grade, and nothing on it leaves this computer unless you copy or download it yourself.</div></footer>
 <!-- ?v= is the version (package.json): a browser that kept the last version's script for its ten
      minutes would otherwise run old code under new buttons (2026-11-24). test/page.test.js checks it. -->
-<script src="retake-planner-engine.js?v=1.2.1"></script>
-<script src="retake-planner-app.js?v=1.2.1"></script>
+<script src="retake-planner-engine.js?v=1.3.0"></script>
+<script src="retake-planner-app.js?v=1.3.0"></script>
 </body>
 </html>

@@ -64,7 +64,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VERSION = 'retake-planner/1.2.1';
+  const VERSION = 'retake-planner/1.3.0';
   const MAP_FORMAT = 'retake-planner-map/1';
   // The format's name before the planner left BeHistorical (2026-11-17); maps built
   // under it are read unchanged.
@@ -777,7 +777,7 @@
       columns: ltOrder.map(g => ({ key: g,
         cols: pairs.map((p, i) => i).filter(i => gk(pairs[i].q) === g) })).filter(c => c.cols.length),
       students, took: took.length, questions: main.questions, targets: main.targets, groups: main.groups, average: main.average,
-      sections: sectionNames, byClass, notes,
+      sections: sectionNames, byClass, notes, everyone,
       possible: worth.reduce((t, w) => t + w, 0)
     };
   }
@@ -866,20 +866,39 @@
     if (q.rationale) lines.push('   Why the other answers are wrong: ' + plain(q.rationale));
     return lines.join('\n');
   }
+  // What the AI is told to label each question with, so the student sees what it
+  // reassesses ("[Topic 3.4]"). With no map there is no topic to name.
+  function labelHint(a, s) {
+    if (a.by === 'question') return '';
+    const first = missedFor(a, s)[0];
+    const example = first ? (a.by === 'topic' ? 'Topic ' + first.key : first.key) : (a.by === 'topic' ? 'Topic 3.1' : '3.1 LT1');
+    return 'Begin each question with what it reassesses, in square brackets, using the labels below, for example [' + example + '].';
+  }
+  // The answer comes back in two parts under fixed headings (Jeff, 2026-11-27): a
+  // student copy with nothing but the questions, which goes straight into a Word
+  // document or back into the planner, and the teacher's notes kept apart.
+  function format(many, n) {
+    const who = many ? 'N' : String(n);
+    return [
+      'Format your answer in two parts, with these headings exactly, each on a line of its own' + (many ? ', for each student in turn (N is the student\'s number)' : '') + ':',
+      '=== STUDENT COPY: Student ' + who + ' ===',
+      'Only the questions, numbered 1, 2, 3: no answers, no notes, no title, no introduction.',
+      '=== TEACHER NOTES: Student ' + who + ' ===',
+      'For each question, by its number, "What a strong answer includes:" with two or three short points.'
+    ];
+  }
   function instructions(style, count, many) {
     const who = many ? 'each student below' : 'this student';
     if (style === 'corrections') {
       return [
         'Write test corrections for ' + who + '. For every question listed, write one open-ended correction prompt that asks the student to explain, in their own words, why the answer they chose is not the best answer and which idea the best answer depends on.',
-        'Do not give the correct answer away in the prompt. Do not write multiple-choice questions.',
-        'After each prompt, add "What a strong answer includes:" with two or three short points for the teacher.'
+        'Do not give the correct answer away in the prompt. Do not write multiple-choice questions.'
       ];
     }
     return [
       'Write ' + count + ' new open-ended retake question' + (count > 1 ? 's' : '') + ' for ' + who + '. Each question must check the same understanding the missed questions checked, but must not repeat those questions, their wording or their answer choices.',
       'Spread the questions across what the student missed, giving more to the topics or targets with more misses.',
-      'Each question should ask the student to explain, with specific evidence, in a short paragraph. Do not write multiple-choice questions. Match the reading level of the original questions.',
-      'After each question, add "What a strong answer includes:" with two or three short points for the teacher.'
+      'Each question should ask the student to explain, with specific evidence, in a short paragraph. Do not write multiple-choice questions. Match the reading level of the original questions.'
     ];
   }
   function header(a, style) {
@@ -892,7 +911,8 @@
     const count = Math.max(1, Math.min(10, Math.round(Number(o.count) || 3)));
     const missed = missedFor(a, s);
     if (!missed.length) return '';
-    return [header(a, style), '', ...instructions(style, count, false), '',
+    const hint = labelHint(a, s);
+    return [header(a, style), '', ...instructions(style, count, false), ...(hint ? [hint] : []), '', ...format(false, s.n), '',
       'Student ' + s.n + ' missed these questions:', '', missed.map((m, i) => describeMiss(a, m, i)).join('\n\n'), ''].join('\n');
   }
   // One prompt for the whole class: one paste, every student's questions back,
@@ -903,11 +923,112 @@
     const count = Math.max(1, Math.min(10, Math.round(Number(o.count) || 3)));
     const who = a.students.filter(s => s.took && missedFor(a, s).length);
     if (!who.length) return '';
-    return [header(a, style), '', ...instructions(style, count, true),
-      'Put each student\'s questions under a heading with their student number, for example "Student 3".', '',
+    const hint = labelHint(a, who[0]);
+    return [header(a, style), '', ...instructions(style, count, true), ...(hint ? [hint] : []), '', ...format(true), '',
       who.map(s => '=== Student ' + s.n + ' ===\n' + missedFor(a, s).map((m, i) => describeMiss(a, m, i)).join('\n\n')).join('\n\n'), ''].join('\n');
   }
 
+  /* ── the AI's answer, back in the planner: student handouts ───────────── */
+
+  // Reads what the teacher pasted back from their AI and keeps only the student
+  // copies: "=== STUDENT COPY: Student 4 ===" and its numbered questions. Teacher
+  // notes, and any "What a strong answer includes" that strayed into a student copy,
+  // never reach a handout. Chat AIs decorate headings and numbers with Markdown
+  // (###, **bold**), so that is stripped first.
+  //   parseAiAnswer(text, { n })  ->  { students: [{ n, questions: [{ label, text }] }], problems }
+  // { n } names the student when a single answer arrives without its heading.
+  function demark(line) {
+    return String(line).replace(/^\s*(?:#{1,6}\s*|>\s*)+/, '').replace(/\*\*|__/g, '').replace(/(^|\s)[*_](\S)/g, '$1$2').replace(/(\S)[*_](?=\s|$|[.,;:!?)])/g, '$1').trim();
+  }
+  function parseAiAnswer(text, options) {
+    const o = options || {};
+    const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n').map(demark);
+    const problems = [];
+    const sections = [];
+    let cur = null;
+    const head = /^(?:=+\s*)?(STUDENT\s+COPY|TEACHER\s+NOTES)\b[^0-9\n]*?(?:Student\s*#?\s*(\d+))?\s*(?:=+)?\s*:?\s*$/i;
+    lines.forEach(line => {
+      const m = head.exec(line);
+      if (m) {
+        cur = { kind: /student/i.test(m[1]) ? 'student' : 'teacher', n: m[2] ? Number(m[2]) : null, lines: [] };
+        sections.push(cur);
+        return;
+      }
+      if (/^=+\s*Student\s+\d+\s*=+$/i.test(line)) { cur = null; return; }
+      if (cur) cur.lines.push(line);
+    });
+    let copies = sections.filter(x => x.kind === 'student');
+    if (!sections.length) {
+      // No headings: a single student's answer, when the teacher says whose it is.
+      if (o.n) copies = [{ kind: 'student', n: Number(o.n), lines: lines.slice(0, (lines.findIndex(l => /what a strong answer includes/i.test(l)) + 1 || lines.length + 1) - 1) }];
+      else problems.push('No "STUDENT COPY: Student N" heading was found. Paste the AI\'s whole answer, or choose whose answer it is.');
+    }
+    const students = [];
+    copies.forEach(sec => {
+      const n = sec.n || (copies.length === 1 && o.n ? Number(o.n) : null);
+      if (!n) { problems.push('A STUDENT COPY heading has no student number, so it was left out.'); return; }
+      const questions = [];
+      let q = null;
+      let notes = false;
+      sec.lines.forEach(line => {
+        if (!line) return;
+        const num = /^(?:Question\s+)?(\d{1,2})[.):]\s+(.*)$/i.exec(line);
+        if (num) {
+          notes = false;
+          q = { text: num[2], label: '' };
+          questions.push(q);
+          return;
+        }
+        if (/^what a strong answer includes/i.test(line)) { notes = true; return; }
+        if (notes || !q) return;
+        if (/^[-•*]\s/.test(line) && /strong answer/i.test(line)) return;
+        q.text += ' ' + line;
+      });
+      questions.forEach(x => {
+        x.text = x.text.replace(/\s*what a strong answer includes:?.*$/i, '').trim();
+        const lab = /^\[([^\]]{1,40})\]\s*[:\-]?\s*/.exec(x.text) || /^\((Topic [^)]{1,30})\)\s*[:\-]?\s*/i.exec(x.text);
+        if (lab) { x.label = lab[1].trim(); x.text = x.text.slice(lab[0].length).trim(); }
+      });
+      const kept = questions.filter(x => x.text);
+      if (!kept.length) { problems.push('Student ' + n + '\'s copy has no numbered questions.'); return; }
+      const already = students.find(x => x.n === n);
+      if (already) { problems.push('Student ' + n + ' appears twice; the later copy was used.'); already.questions = kept; }
+      else students.push({ n, questions: kept });
+    });
+    return { students, problems };
+  }
+
+  // A student's handout, as HTML for Word and as plain text: test title, name and
+  // date lines, one line of directions, and each question with its label and lines
+  // to write on. Several students: one per page. The student's name is added here,
+  // on the teacher's computer; it was never in the prompt.
+  //   handouts([{ name, n, questions }], { title, style, lines })  ->  { html, text }
+  function handouts(list, options) {
+    const o = options || {};
+    const style = o.style === 'corrections' ? 'corrections' : 'retake';
+    const lines = Math.max(0, Math.min(15, o.lines == null ? 6 : Number(o.lines) || 0));
+    const title = String(o.title || 'Test') + (style === 'corrections' ? ': Test Corrections' : ': Retake');
+    const directions = style === 'corrections'
+      ? 'For each question, explain in your own words why your first answer was not the best answer, and what idea the best answer depends on.'
+      : 'Answer each question in a short paragraph. Use specific evidence.';
+    const h = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const rule = '_'.repeat(78);
+    const font = 'font-family:Calibri,Arial,sans-serif;';
+    const pages = list.map((st, i) => {
+      const qs = st.questions.map((q, k) => '<p style="' + font + 'font-size:12pt;margin:14pt 0 4pt"><b>' + (k + 1) + '.</b> '
+        + (q.label ? '<span style="font-size:9pt;color:#555555">[' + h(q.label) + ']</span> ' : '') + h(q.text) + '</p>'
+        + Array.from({ length: lines }, () => '<p style="' + font + 'font-size:12pt;margin:0;line-height:22pt;color:#999999">' + rule + '</p>').join('')).join('');
+      return (i ? '<br clear="all" style="page-break-before:always">' : '')
+        + '<p style="' + font + 'font-size:16pt;font-weight:bold;margin:0 0 6pt">' + h(title) + '</p>'
+        + '<p style="' + font + 'font-size:12pt;margin:0 0 4pt">Name: ' + (st.name ? '<b>' + h(st.name) + '</b>' : '_______________________________') + '&nbsp;&nbsp;&nbsp;&nbsp;Date: ______________</p>'
+        + '<p style="' + font + 'font-size:11pt;font-style:italic;margin:0 0 6pt">' + h(directions) + '</p>' + qs;
+    });
+    const html = '<html><body>' + pages.join('') + '</body></html>';
+    const text = list.map(st => [title, 'Name: ' + (st.name || '______________________') + '    Date: ____________', directions, '',
+      ...st.questions.map((q, k) => (k + 1) + '. ' + (q.label ? '[' + q.label + '] ' : '') + q.text + '\n' + Array.from({ length: lines }, () => rule).join('\n') + '\n')].join('\n')).join('\n\f\n');
+    return { html, text, title, directions };
+  }
+
   return { VERSION, MAP_FORMAT, MAP_FORMATS, BY_LABEL, parseCsv, csvCell, norm, plain, display, parseMap, readExport, combineExports, match, mapFromExport, analyze,
-    planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt };
+    planText, planCsv, reportRows, reportCsv, retakePrompt, classPrompt, parseAiAnswer, handouts };
 });

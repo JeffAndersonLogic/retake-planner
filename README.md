@@ -28,6 +28,13 @@ It reads results. It does not grade. Canvas holds every grade.
      **Test corrections**. The AI writes open-ended questions on what each student missed;
      read and edit them before a student sees them.
    - **Same retake:** students who missed exactly the same topics.
+   - **Student copies** (at the bottom of Retake questions): paste the AI's answer back, for one
+     student or the whole class. The planner keeps only the STUDENT COPY part of each answer, adds
+     the student's name on your computer (it was never in the prompt), and makes one page per
+     student: test title, name and date, a line of directions, each question with its topic label
+     and lines to write on. **Copy for Word** copies one student's page with its formatting; **Copy
+     all for Word** copies every page, each starting a new page in Word. **Print this view** prints
+     one per page.
 4. **Group by** topic (the default), learning target, or question.
 5. **Sort students by** class, name, or score (lowest first). The same order is used on every view.
 
@@ -57,6 +64,14 @@ file alone, the planner shows right and wrong (from Canvas's own points) questio
 and the retake prompts still carry each missed question and the answer chosen. The question map
 adds topics, learning targets, the correct answer for questions nobody got right, and the
 reason each wrong answer is wrong.
+
+### How the AI's answer is laid out
+
+Every prompt asks the AI to answer under two headings it must use exactly:
+`=== STUDENT COPY: Student 4 ===` (only the numbered questions, each starting with its topic in
+square brackets) and `=== TEACHER NOTES: Student 4 ===` ("What a strong answer includes" for each
+question). The student copy can go straight into a Word document, and it is the part the planner
+reads back. Teacher notes never reach a student copy.
 
 ### The retake prompts and privacy
 
