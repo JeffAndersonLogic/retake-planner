@@ -23,6 +23,11 @@ AndersonLogic-OS repository, `04_PRODUCTS/Retake-Planner/`. This repository hold
 - **Partner logos** (`assets/images/partners/`) are the owner's artwork, unedited, with their
   source in that folder's README.
 - **Projector safe also hides the retake prompts**: they hold the test's questions and answers.
+- **The Map Maker's tagging prompt carries the test's questions and nothing about any student**,
+  and Projector safe hides the Map Maker. A map it saves is an answer key like any other.
+- **Standards (Jeff, 2026-11-25):** a standard is tested when at least 2 questions assess it
+  (`MIN_QUESTIONS`), and a student has shown it only when every one of its questions is right.
+  Report both the class and each student, and say "shown on multiple choice", never more.
 - Writing: no em dashes or en dashes in running prose.
 
 ## Brand

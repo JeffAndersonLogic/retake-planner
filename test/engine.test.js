@@ -535,6 +535,187 @@ ok('accents and quotes scrambled by Excel are repaired; untouched text is left a
   assert.strictEqual(E.readExport(mixed).students[0].name, 'Li 李', 'text Windows-1252 cannot hold is never re-read');
 });
 
+/* ── the Map Maker (2026-11-24) ─────────────────────────────────────────── */
+
+// The Map Maker's questions, from the Canvas file alone, and the tags the teacher (or
+// their AI) would give them: each question's real target, found by its correct answer.
+function makerDraft(csv) { return E.mapFromExport(E.readExport(csv || wide()), 'Invented').map.questions; }
+function realTags(draft) {
+  const tags = {};
+  draft.forEach(q => {
+    const key = MAP.questions.find(m => m.options.includes(q.options[q.answer]));
+    tags[q.n] = { topic: key.lt.slice(0, 3), lt: key.lt };
+  });
+  return tags;
+}
+
+ok('Map Maker: a pasted list of standards reads in the forms teachers paste', () => {
+  const st = E.parseStandards('3.1 LT1: I can explain gunpowder\nKC-3.1.I\tEmpires expanded\n- WH.4.2 - Analyze trade\nSS.9.12 Explain revolutions\n2) I can compare empires\n\n');
+  assert.deepStrictEqual(st.order, ['3.1 LT1', 'KC-3.1.I', 'WH.4.2', 'SS.9.12', 'T1']);
+  assert.strictEqual(st.targets['KC-3.1.I'], 'Empires expanded');
+  assert.strictEqual(st.targets.T1, 'I can compare empires', 'a line with no code is numbered');
+  assert.deepStrictEqual(E.parseStandards('  \n\n').order, [], 'negative control: nothing pasted, no standards');
+});
+
+ok('Map Maker: the tagging prompt carries every question and standard, and no student', () => {
+  const draft = makerDraft();
+  const st = E.parseStandards('Z.1 LT1: I can explain one.\nZ.2 LT1: I can compare three.');
+  const text = E.tagPrompt(draft, st, 'Invented');
+  draft.forEach(q => assert.ok(text.includes('Q' + q.n + '. '), 'question ' + q.n + ' missing'));
+  assert.ok(text.includes('Z.1 LT1: I can explain one.') && text.includes('Z.2 LT1: I can compare three.'), 'standards listed');
+  assert.ok(text.includes('Q1 | topic | code'), 'the reply form is given');
+  const leaks = t => NAMES.concat(NAMES.map(n => n.split(' ')[0])).filter(n => t.includes(n));
+  assert.deepStrictEqual(leaks(text), [], 'a student name reached the prompt');
+  assert.ok(!/\b(Green|Silver)\b/.test(text), 'a class name reached the prompt');
+  assert.deepStrictEqual(leaks(text + ' Ben'), ['Ben'], 'negative control: the name check finds a name');
+  assert.ok(/have not given a list/.test(E.tagPrompt(draft, E.parseStandards(''), 'Invented')), 'with no list, the AI is asked to name the targets');
+});
+
+ok('Map Maker: the AI\'s reply is read forgivingly, and its chatter is skipped', () => {
+  const r = E.parseTags('Here are the tags you asked for:\n| Q# | Topic | Code |\n|---|---|---|\n| Q1 | 3.1 | KC-3.1.I |\n**Q2** | 3.2 | 3.1 LT1\n3. 3.3 | WH.4.2\nQuestion 4: LT9\n5\t3.1\tSS.9.12\n3.1 LT1: I can explain gunpowder\nLT9: I can do nine');
+  assert.strictEqual(r.read, 5);
+  assert.deepStrictEqual(r.tags[1], { topic: '3.1', lt: 'KC-3.1.I' });
+  assert.deepStrictEqual(r.tags[2], { topic: '3.2', lt: '3.1 LT1' });
+  assert.deepStrictEqual(r.tags[3], { topic: '3.3', lt: 'WH.4.2' }, '"3.1 LT1: I can ..." must not overwrite question 3');
+  assert.deepStrictEqual(r.tags[4], { topic: '', lt: 'LT9' }, 'a code alone, no topic');
+  assert.deepStrictEqual(r.tags[5], { topic: '3.1', lt: 'SS.9.12' }, 'tabs');
+  assert.strictEqual(r.targets.LT9, 'I can do nine', 'a code the AI explained');
+  assert.strictEqual(E.parseTags('Sure! I would be glad to help.\nTopic | Code').read, 0, 'negative control: no tags, none read');
+});
+
+ok('Map Maker: its map gives exactly the results of the hand-written key', () => {
+  const draft = makerDraft();
+  assert.strictEqual(draft.length, 6);
+  assert.ok(draft.every(q => q.answer >= 0), 'every question has a correct answer from Canvas\'s points');
+  const built = E.buildMap({ title: 'Invented', questions: draft, tags: realTags(draft), targets: MAP.targets });
+  assert.deepStrictEqual(built.problems, []);
+  const pm = E.parseMap(JSON.stringify(built.map));
+  assert.deepStrictEqual(pm.problems, [], 'the saved file reads back');
+  const { matched, a } = run(wide(), { by: 'lt' }, pm.map);
+  assert.strictEqual(matched.pairs.length, 6);
+  assert.ok(!matched.pairs.some(p => p.partial), 'no false alarm about choices it did not list');
+  // A map made from the Canvas file numbers the questions in Canvas's order; the key
+  // numbers them its own way. Translated to the key's numbers, every result is the same.
+  const keyN = new Map(draft.map(q => [q.n, MAP.questions.find(m => m.options.includes(q.options[q.answer])).n]));
+  const inKeyNumbers = x => { x.students.forEach(s => s.targetsMissed.forEach(e => { e.questions = e.questions.map(n => keyN.get(n)).sort((p, q) => p - q); })); return summary(x); };
+  assert.strictEqual(inKeyNumbers(a), EXPECTED);
+  assert.strictEqual(inKeyNumbers(run(long(), { by: 'lt' }, pm.map).a), EXPECTED, 'the same map reads the other layout too');
+  const byTopic = run(wide(), {}, pm.map).a;
+  assert.deepStrictEqual(byTopic.targets.map(t => t.lt), ['Z.1', 'Z.2'], 'grouped by the topics given');
+  const wrongTags = realTags(draft);
+  const swap = Object.keys(wrongTags).find(n => wrongTags[n].lt === 'Z.2 LT1');
+  wrongTags[swap] = { topic: 'Z.1', lt: 'Z.1 LT1' };
+  const off = E.parseMap(JSON.stringify(E.buildMap({ title: 'x', questions: draft, tags: wrongTags, targets: MAP.targets }).map)).map;
+  assert.notStrictEqual(inKeyNumbers(run(wide(), { by: 'lt' }, off).a), EXPECTED, 'negative control: a wrong tag changes the results');
+});
+
+ok('Map Maker: an untagged question is named, and the map is not made', () => {
+  const draft = makerDraft();
+  const tags = realTags(draft);
+  delete tags[4];
+  tags[2] = { topic: '3.1', lt: '  ' };
+  const b = E.buildMap({ title: 'x', questions: draft, tags });
+  assert.strictEqual(b.problems.length, 1);
+  assert.ok(/questions 2, 4\./.test(b.problems[0]), b.problems[0]);
+});
+
+ok('Map Maker: a question everyone got right, or nobody did, still makes a map', () => {
+  // Everyone right on one question (one choice seen); everyone wrong on another (no answer known).
+  const allRight = 8 + ORDER.indexOf(1) * 2;
+  const allWrong = 8 + ORDER.indexOf(0) * 2;
+  const csv = wide({ mutate: rows => rows.slice(1).forEach(r => {
+    r[allRight] = MAP.questions[1].options[MAP.questions[1].answer]; r[allRight + 1] = '2.0';
+    r[allWrong] = MAP.questions[0].options[(MAP.questions[0].answer + 1) % 4]; r[allWrong + 1] = '0.0';
+  }) });
+  const draft = makerDraft(csv);
+  const one = draft.find(q => q.options.length === 1);
+  const none = draft.find(q => q.answer < 0);
+  assert.ok(one && none, 'both kinds are in the draft');
+  const tags = {};
+  draft.forEach(q => { tags[q.n] = { topic: 'Z', lt: 'Z LT' }; });
+  const plainMap = E.parseMap(JSON.stringify(E.buildMap({ title: 'x', questions: draft, tags }).map));
+  assert.deepStrictEqual(plainMap.problems, [], 'accepted: ' + plainMap.problems.join(' '));
+  assert.ok(plainMap.warnings.some(w => /no correct answer in the map/.test(w)), 'the unknown answer is said');
+  const exp = E.readExport(csv);
+  const a = E.analyze(plainMap.map, exp, E.match(plainMap.map, exp), { by: 'question' });
+  const q = a.questions.find(x => x.q.n === none.n);
+  assert.strictEqual(q.correct, 0, 'Canvas\'s points still mark everyone wrong');
+  const typed = E.buildMap({ title: 'x', questions: draft, tags, answers: { [none.n]: 'The real answer, typed by the teacher' } }).map;
+  const tq = typed.questions.find(x => x.n === none.n);
+  assert.strictEqual(tq.options[tq.answer], 'The real answer, typed by the teacher', 'a typed answer becomes the key');
+  // Negative control: the relaxed rules are only for the Map Maker's own maps.
+  const strict = JSON.parse(JSON.stringify(typed));
+  strict.questions.forEach(x => { delete x.seen; });
+  strict.questions.find(x => x.n === one.n).answer = 0;
+  assert.ok(E.parseMap(JSON.stringify(strict)).problems.some(p => /fewer than two/.test(p)), 'a hand-written map still needs two choices');
+});
+
+/* ── standards coverage (2026-11-25) ────────────────────────────────────── */
+// Jeff's rules: a standard is tested by at least 2 questions; a student has shown it when
+// every one of its questions is right; the class and each student.
+// The invented test: Z.1 LT1 is questions 1-2, Z.1 LT2 is 3-4, Z.2 LT1 is 5-6, and
+// Ann missed 1; Ben 1, 2 and 5; Cat nothing; Dan 3, 4 and 6.
+function covSummary(cov, a) {
+  const name = new Map(a.students.map(s => [s.key, s.name.split(' ')[0]]));
+  return cov.rows.map(r => r.lt + ':' + r.status + ':' + r.shown.map(k => name.get(k)).join('.') + '/' + r.notYet.map(k => name.get(k)).join('.') + '/' + r.few.map(k => name.get(k)).join('.')).join(' | ');
+}
+
+ok('standards: tested by 2 or more questions, shown only with every question right', () => {
+  const { a } = run(wide());
+  const cov = E.coverage(MAP, a);
+  assert.strictEqual(E.MIN_QUESTIONS, 2);
+  assert.strictEqual(covSummary(cov, a), 'Z.1 LT1:tested:Cat.Dan/Ann.Ben/ | Z.1 LT2:tested:Ann.Ben.Cat/Dan/ | Z.2 LT1:tested:Ann.Cat/Ben.Dan/');
+  assert.strictEqual(cov.tested, 3);
+  assert.deepStrictEqual(cov.students.map(s => s.shown), [2, 1, 3, 1], 'each student\'s count of standards shown');
+  assert.strictEqual(cov.rows[0].pct, 0.5);
+  // Negative control: one more miss for Cat turns her shown standard into not yet.
+  const q = MAP.questions[0];
+  const col = 8 + ORDER.indexOf(0) * 2;
+  const { a: b } = run(wide({ mutate: rows => { rows[3][col] = q.options[(q.answer + 1) % 4]; rows[3][col + 1] = '0.0'; } }));
+  assert.ok(/Z\.1 LT1:tested:Dan\/Ann\.Ben\.Cat\//.test(covSummary(E.coverage(MAP, b), b)), covSummary(E.coverage(MAP, b), b));
+});
+
+ok('standards: one question is too few to judge; a listed standard no question asks is not on the test', () => {
+  const m = inventedMap();
+  m.questions[5].lt = 'Z.3 LT1';
+  m.targets['Z.3 LT1'] = 'I can explain three.';
+  m.targets['Z.9 LT1'] = 'I can explain nine.';
+  const map = E.parseMap(JSON.stringify(m)).map;
+  const { a } = run(wide(), {}, map);
+  const cov = E.coverage(map, a);
+  const z2 = cov.rows.find(r => r.lt === 'Z.2 LT1');
+  assert.strictEqual(z2.status, 'thin');
+  assert.strictEqual(z2.few.length, 4, 'every student: too few questions');
+  assert.strictEqual(z2.pct, null);
+  assert.strictEqual(cov.rows.find(r => r.lt === 'Z.3 LT1').status, 'thin');
+  assert.deepStrictEqual(cov.untested.map(r => r.lt), ['Z.9 LT1']);
+  assert.strictEqual(cov.tested, 2);
+  assert.strictEqual(cov.thin, 2);
+  assert.deepStrictEqual(E.coverage(MAP, run(wide()).a).untested, [], 'negative control: a full list has nothing untested');
+});
+
+ok('standards: a student who saw only one of a standard\'s questions is not judged on it', () => {
+  const { a } = run(long({ mutate: rows => rows.forEach(r => {
+    if (r[0] === 'Cat Invented' && r[5] === 'item-1') { r[7] = ''; r[8] = ''; r[10] = 'Not Attempted'; }
+  }) }));
+  const cov = E.coverage(MAP, a);
+  assert.strictEqual(covSummary(cov, a).split(' | ')[0], 'Z.1 LT1:tested:Dan/Ann.Ben/Cat');
+  assert.strictEqual(cov.rows[0].pct, 1 / 3, 'judged on the three who saw both questions');
+});
+
+ok('standards: the download has a row per student and per class, and no names when projector safe', () => {
+  const { a } = run(wide());
+  const cov = E.coverage(MAP, a);
+  const rows = E.parseCsv(E.coverageCsv(cov, a));
+  assert.deepStrictEqual(rows[0], ['student', 'section', 'standards shown', 'standards tested', 'Z.1 LT1', 'Z.1 LT2', 'Z.2 LT1']);
+  assert.deepStrictEqual(rows[1], ['Ann Invented', 'Green', '2', '3', 'not yet', 'shown', 'shown']);
+  assert.deepStrictEqual(rows[5], ['Class: students who showed it', '', '', '', '2 of 4', '3 of 4', '2 of 4']);
+  const anon = E.coverageCsv(cov, a, { anon: true });
+  assert.ok(!NAMES.some(n => anon.includes(n.split(' ')[0])) && !/Green|Silver/.test(anon), 'projector safe: no names, no classes');
+  assert.ok(/Student 1/.test(anon), 'students by number');
+  assert.ok(NAMES.some(n => E.coverageCsv(cov, a).includes(n)), 'negative control: names are there when shown');
+});
+
 /* ── 2026-11-27: student copies ────────────────────────────────────────── */
 
 // An answer the way chat AIs write one: Markdown headings and bold numbers, teacher

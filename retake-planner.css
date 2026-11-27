@@ -209,6 +209,30 @@ ol.howto{margin:0 0 12px;padding-left:20px;display:grid;gap:4px;font-size:13px;m
 .prompt summary{cursor:pointer;font-family:var(--head);font-weight:700;font-size:12.5px;color:var(--gold-ink);padding:8px 0}
 pre.prompt-text{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;padding:12px 14px;background:var(--inset);border-radius:10px;font-family:var(--text);font-size:12.5px;line-height:1.55;max-height:420px;overflow:auto}
 
+/* Standards (2026-11-25): a standard's code is longer than a question number */
+table.heat th.std{min-width:44px;padding:6px 8px;white-space:nowrap}
+table.heat th.std.thin,table.report.standards tr.thin td{color:var(--iron)}
+ul.untested{margin:0 0 8px}
+
+/* the Map Maker (2026-11-24): folded shut until the teacher opens it */
+#maker summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
+#maker summary::-webkit-details-marker{display:none}
+#maker summary h2::before{content:"▸ ";color:var(--gold-ink)}
+#maker details[open] > summary{margin-bottom:12px}
+#maker details[open] > summary h2::before{content:"▾ "}
+.maker-steps{margin:0;padding-left:20px;display:grid;gap:16px;font-size:13px;max-width:90ch}
+.maker-steps li{display:grid;gap:8px}
+/* Grid items size to their content unless told not to; the wide table must scroll inside its own box. */
+#maker details,#maker-body > *,.maker-steps li > *{min-width:0}
+textarea,input.text{font:inherit;font-size:13px;color:inherit;width:100%;border:1px solid var(--rule);border-radius:10px;background:var(--paper);padding:8px 10px}
+textarea{resize:vertical;min-height:84px;line-height:1.5}
+textarea:focus,input.text:focus{outline:2px solid var(--gold);outline-offset:1px;border-color:var(--steel)}
+#maker-name{max-width:360px;flex:1}
+code{font-size:12px;background:var(--inset);padding:1px 5px;border-radius:5px}
+table.maker td{vertical-align:top}
+table.maker td.q{min-width:220px;max-width:52ch}
+table.maker input.text{min-width:96px;padding:6px 8px}
+
 /* printing: the view on screen, without the page's furniture */
 @media print{
   body{background:#fff;font-size:11px}
